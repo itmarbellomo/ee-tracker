@@ -70,12 +70,24 @@ export default function App() {
     setSaveStatus("saving");
     try {
       const rows = assignmentsToRows(newAssignments);
-      const encoded = encodeURIComponent(JSON.stringify(rows));
-      const url = `${scriptUrl}?action=save&data=${encoded}`;
-      await fetch(url, { method: "GET" });
+      
+      // Use POST instead of GET, and send data in the body
+      await fetch(scriptUrl, { 
+        method: "POST",
+        // 'text/plain' is a magic trick to bypass CORS preflight errors in Google Apps Script
+        headers: {
+          "Content-Type": "text/plain;charset=utf-8",
+        },
+        body: JSON.stringify({
+          action: "save",
+          rows: rows
+        })
+      });
+      
       setSaveStatus("saved");
       setTimeout(() => setSaveStatus("idle"), 2000);
-    } catch {
+    } catch (err) {
+      console.error("Save error:", err);
       setSaveStatus("error");
       setTimeout(() => setSaveStatus("idle"), 3000);
     }
