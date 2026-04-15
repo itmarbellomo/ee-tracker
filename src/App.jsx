@@ -97,7 +97,7 @@ const globalStyles = `
 function uid() { return Math.random().toString(36).slice(2,10); }
 function today() { return new Date().toISOString().slice(0,10); }
 
-// Universal Date Normalizer: Forces YYYY-MM-DD format regardless of origin
+// Format for input fields
 function normalizeDate(d) {
   if (!d) return "";
   const str = String(d);
@@ -107,12 +107,60 @@ function normalizeDate(d) {
   return str;
 }
 
-// Format Date for Display: Converts YYYY-MM-DD to DD/MM/YYYY
+// Format for standard display (DD/MM/YYYY)
 function displayDate(d) {
   if (!d) return "—";
   const parts = String(d).split("-");
   if (parts.length === 3) return `${parts[2]}/${parts[1]}/${parts[0]}`;
   return d;
+}
+
+// Dynamic grouping format (Smart text vs literal dates)
+function formatGroupDate(dateStr) {
+  if (!dateStr || dateStr === "No date") return "No Date";
+  const todayDate = new Date(); todayDate.setHours(0,0,0,0);
+  const d = new Date(dateStr); d.setHours(0,0,0,0);
+  const diff = Math.round((d - todayDate)/86400000);
+  
+  if (diff === 0) return "Today";
+  if (diff === 1) return "Tomorrow";
+  if (diff === -1) return "Yesterday";
+  if (diff > 1 && diff < 7) {
+     return ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"][d.getDay()];
+  }
+  return displayDate(dateStr);
+}
+
+// Timeline categorization for "By Priority" view
+function getTimelineGroup(dueDate) {
+  if (!dueDate) return { key: "99_No date", label: "No Date" };
+  const today = new Date(); today.setHours(0,0,0,0);
+  const d = new Date(dueDate); d.setHours(0,0,0,0);
+  const diffDays = Math.round((d - today) / 86400000);
+  
+  if (diffDays < 0) return { key: "01_Overdue", label: "Overdue" };
+  if (diffDays === 0) return { key: "02_Today", label: "Today" };
+  if (diffDays === 1) return { key: "03_Tomorrow", label: "Tomorrow" };
+  
+  const days = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+  if (diffDays === 2) return { key: "04_Due 2 Days", label: `Due ${days[d.getDay()]}` };
+  
+  // Find upcoming Saturday (End of week)
+  const daysToSaturday = 6 - today.getDay();
+  const thisSaturday = new Date(today);
+  thisSaturday.setDate(today.getDate() + daysToSaturday);
+  if (d <= thisSaturday) return { key: "05_Weekend", label: "Due by Weekend" };
+  
+  const nextSaturday = new Date(thisSaturday);
+  nextSaturday.setDate(thisSaturday.getDate() + 7);
+  if (d <= nextSaturday) return { key: "06_NextWeek", label: "Due in a Week" };
+  
+  const twoWeeksSat = new Date(nextSaturday);
+  twoWeeksSat.setDate(nextSaturday.getDate() + 7);
+  if (d <= twoWeeksSat) return { key: "07_TwoWeeks", label: "Due in 2 Weeks" };
+  
+  const months = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+  return { key: `08_Month_${d.getFullYear()}_${String(d.getMonth()).padStart(2,'0')}`, label: `Due in ${months[d.getMonth()]} ${d.getFullYear()}` };
 }
 
 function fmt(ts) { 
@@ -144,7 +192,6 @@ function assignmentsToRows(assignments) {
   return [header, ...rows];
 }
 
-// Synthesized Audio logic (No external files needed)
 function playSound(type) {
   try {
     const ctx = window.audioCtx || (window.audioCtx = new (window.AudioContext || window.webkitAudioContext)());
@@ -156,15 +203,15 @@ function playSound(type) {
     
     if (type === 'task') {
       osc.type = 'sine';
-      osc.frequency.setValueAtTime(523.25, ctx.currentTime); // C5
-      osc.frequency.exponentialRampToValueAtTime(1046.50, ctx.currentTime + 0.15); // C6
+      osc.frequency.setValueAtTime(523.25, ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(1046.50, ctx.currentTime + 0.15);
       gain.gain.setValueAtTime(0.5, ctx.currentTime);
       gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.4);
       osc.start();
       osc.stop(ctx.currentTime + 0.4);
     } else {
       osc.type = 'triangle';
-      osc.frequency.setValueAtTime(880, ctx.currentTime); // A5
+      osc.frequency.setValueAtTime(880, ctx.currentTime);
       gain.gain.setValueAtTime(0.3, ctx.currentTime);
       gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.15);
       osc.start();
@@ -180,14 +227,13 @@ export default function App() {
   const [saveStatus, setSaveStatus] = useState("idle");
   const [connected, setConnected] = useState(null);
   const [tab, setTab] = useState("assignments");
-  const [filter, setFilter] = useState("All"); // All, Pending, Completed, Overdue, This Week
-  const [groupBy, setGroupBy] = useState("dueDate"); // dueDate, priority, course
+  const [filter, setFilter] = useState("All"); 
+  const [groupBy, setGroupBy] = useState("dueDate"); 
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId] = useState(null);
   const [expandedId, setExpandedId] = useState(null);
   const [subtaskInputs, setSubtaskInputs] = useState({});
 
-  // Settings State
   const [courses, setCourses] = useState(() => {
     try { return JSON.parse(localStorage.getItem("ee-courses")) || DEFAULT_COURSES; } catch { return DEFAULT_COURSES; }
   });
@@ -198,33 +244,44 @@ export default function App() {
 
   useEffect(() => { localStorage.setItem("ee-courses", JSON.stringify(courses)); }, [courses]);
   useEffect(() => { localStorage.setItem("ee-colors", JSON.stringify(courseColors)); }, [courseColors]);
-
-  useEffect(() => {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) setScriptUrl(saved);
-  }, []);
+  useEffect(() => { const saved = localStorage.getItem(STORAGE_KEY); if (saved) setScriptUrl(saved); }, []);
 
   const fetchData = useCallback(async (url) => {
     try {
       const res = await fetch(url, { redirect: "follow" });
       if (!res.ok) throw new Error("Network response was not ok");
       const data = await res.json();
-      setAssignments(rowsToAssignments(data));
+      
+      if (Array.isArray(data)) {
+         setAssignments(rowsToAssignments(data));
+      } else {
+         if (data.assignments) setAssignments(rowsToAssignments(data.assignments));
+         if (data.settings && data.settings.length >= 2) {
+            const fetchedCourses = data.settings[0].filter(Boolean);
+            const fetchedColors = data.settings[1].filter(Boolean);
+            if (fetchedCourses.length > 0) setCourses(fetchedCourses);
+            if (fetchedColors.length > 0) setCourseColors(fetchedColors);
+         }
+      }
       setConnected(true);
     } catch { setConnected(false); }
   }, []);
 
   useEffect(() => { if (scriptUrl) fetchData(scriptUrl); }, [scriptUrl, fetchData]);
 
-  const saveData = useCallback(async (newAssignments) => {
+  const saveData = useCallback(async (newAssignments, curCourses, curColors) => {
     if (!scriptUrl) return;
     setSaveStatus("saving");
     try {
-      const rows = assignmentsToRows(newAssignments);
+      const payload = { 
+        action: "save", 
+        rows: assignmentsToRows(newAssignments), 
+        settings: [curCourses || courses, curColors || courseColors] 
+      };
       await fetch(scriptUrl, { 
         method: "POST",
         headers: { "Content-Type": "text/plain;charset=utf-8" },
-        body: JSON.stringify({ action: "save", rows: rows })
+        body: JSON.stringify(payload)
       });
       setSaveStatus("saved");
       setTimeout(() => setSaveStatus("idle"), 2000);
@@ -233,9 +290,9 @@ export default function App() {
       setSaveStatus("error");
       setTimeout(() => setSaveStatus("idle"), 3000);
     }
-  }, [scriptUrl]);
+  }, [scriptUrl, courses, courseColors]);
 
-  const mutate = useCallback((newList) => { setAssignments(newList); saveData(newList); }, [saveData]);
+  const mutate = useCallback((newList) => { setAssignments(newList); saveData(newList, courses, courseColors); }, [saveData, courses, courseColors]);
 
   function connectUrl() {
     const url = urlInput.trim();
@@ -260,7 +317,9 @@ export default function App() {
     setShowForm(false);
   }
 
-  function deleteAssignment(id) { mutate(assignments.filter(a => a.id !== id)); }
+  function deleteAssignment(id) { 
+    mutate(assignments.filter(a => a.id !== id)); 
+  }
 
   function toggleComplete(id) {
     const now = new Date().toISOString();
@@ -337,15 +396,22 @@ export default function App() {
       return g;
     }
     
+    // Complex Timeline + Priority Sorting
     if (groupBy === "priority") {
-      const pOrder = { High: 1, Medium: 2, Low: 3 };
-      g["High Priority"] = []; g["Medium Priority"] = []; g["Low Priority"] = [];
-      [...filtered].sort((a,b) => (a.dueDate || "9999").localeCompare(b.dueDate || "9999")).forEach(a => {
-        if(a.priority === "High") g["High Priority"].push(a);
-        else if (a.priority === "Medium") g["Medium Priority"].push(a);
-        else g["Low Priority"].push(a);
+      const pOrder = { "High": 1, "Medium": 2, "Low": 3 };
+      filtered.forEach(a => {
+        const tl = getTimelineGroup(a.dueDate);
+        if (!g[tl.key]) g[tl.key] = { label: tl.label, items: [] };
+        g[tl.key].items.push(a);
       });
-      return Object.fromEntries(Object.entries(g).filter(([_,v]) => v.length > 0));
+      
+      // Sort inside timeline by priority (High -> Low)
+      Object.values(g).forEach(group => {
+        group.items.sort((a,b) => pOrder[a.priority] - pOrder[b.priority]);
+      });
+      
+      const sortedEntries = Object.entries(g).sort((a,b) => a[0].localeCompare(b[0]));
+      return Object.fromEntries(sortedEntries.map(([k, v]) => [v.label, v.items]));
     }
     
     [...filtered].sort((a,b) => (a.dueDate || "9999").localeCompare(b.dueDate || "9999")).forEach(a => {
@@ -390,21 +456,6 @@ export default function App() {
     const lastWeekTotal = last14.slice(0,7).reduce((s,d) => s + d.count, 0);
     const weekChange = lastWeekTotal === 0 ? null : Math.round((thisWeekTotal - lastWeekTotal) / lastWeekTotal * 100);
 
-    const streaks = (() => {
-      const days = Object.keys(dayMap).sort();
-      let cur = 0, max = 0, prev = null;
-      days.forEach(d => {
-        const expected = prev ? new Date(new Date(prev).getTime() + 86400000).toISOString().slice(0,10) : null;
-        cur = (d === expected) ? cur + 1 : 1;
-        if (cur > max) max = cur;
-        prev = d;
-      });
-      const todayKey = today();
-      const ystKey = new Date(new Date().getTime() - 86400000).toISOString().slice(0,10);
-      const currentStreak = dayMap[todayKey] ? cur : (dayMap[ystKey] ? cur : 0);
-      return { max, current: currentStreak };
-    })();
-
     const procScore = (() => {
       const scores = assignments.filter(a => a.completed && a.completedAt && a.dueDate).map(a => {
         const total = new Date(a.dueDate) - new Date(a.createdAt);
@@ -420,11 +471,10 @@ export default function App() {
     })();
 
     const avgPerDay = allTimestamps.length ? (allTimestamps.length / Math.max(Object.keys(dayMap).length, 1)).toFixed(1) : 0;
-
     const peakHour = hourMap.indexOf(Math.max(...hourMap));
     const peakDay = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][dowMap.indexOf(Math.max(...dowMap))];
 
-    return { last14, hourMap, dowMap, courseMap, thisWeekTotal, lastWeekTotal, weekChange, streaks, procScore, avgPerDay, peakHour, peakDay, insight: null };
+    return { last14, hourMap, dowMap, courseMap, thisWeekTotal, lastWeekTotal, weekChange, procScore, avgPerDay, peakHour, peakDay, insight: null };
   }, [assignments]);
 
   if (!scriptUrl) return <Setup urlInput={urlInput} setUrlInput={setUrlInput} onConnect={connectUrl} />;
@@ -528,7 +578,7 @@ export default function App() {
               {Object.entries(grouped).map(([group, items]) => (
                 <div key={group} style={{ marginBottom:"2rem" }}>
                   <div style={{ fontSize:12, fontWeight:700, color:"var(--text-sub)", letterSpacing:1.5, marginBottom:12, textTransform:"uppercase", borderBottom:"1px solid var(--border)", paddingBottom:8 }}>
-                    {groupBy === "dueDate" ? (group === today() ? "Today" : displayDate(group)) : group}
+                    {groupBy === "dueDate" ? formatGroupDate(group) : group}
                   </div>
                   <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
                     {items.map(a => <AssignmentCard key={a.id} a={a}
@@ -538,7 +588,7 @@ export default function App() {
                       onExpand={() => setExpandedId(expandedId === a.id ? null : a.id)}
                       onToggle={() => toggleComplete(a.id)}
                       onEdit={() => { setEditId(a.id); setForm({ title:a.title, course:a.course, dueDate:a.dueDate, priority:a.priority, description:a.description }); setShowForm(true); window.scrollTo({top:0, behavior:'smooth'}); }}
-                      onDelete={() => deleteAssignment(a.id)}
+                      onDelete={() => { if(window.confirm("Are you sure you want to delete this task?")) deleteAssignment(a.id); }}
                       subtaskInput={subtaskInputs[a.id] || ""}
                       onSubtaskInput={v => setSubtaskInputs(p => ({...p,[a.id]:v}))}
                       onAddSubtask={() => addSubtask(a.id)}
@@ -557,6 +607,7 @@ export default function App() {
               setCourseColors={setCourseColors} 
               assignments={assignments}
               mutate={mutate}
+              saveData={saveData}
             />
           ) : (
             <Analytics data={{...analytics, courses, courseColors}} />
@@ -573,8 +624,7 @@ function AssignmentCard({ a, expanded, onExpand, onToggle, onEdit, onDelete, sub
   const p = pct(a);
   const courseIdx = courses.indexOf(a.course);
   const courseColor = courseIdx >= 0 ? courseColors[courseIdx % courseColors.length] : "#888780";
-  const priorityColor = a.priority === "High" ? "var(--danger)" : a.priority === "Medium" ? "var(--warning)" : "var(--success)";
-  const priorityBg = a.priority === "High" ? "var(--danger-bg)" : a.priority === "Medium" ? "var(--warning-bg)" : "var(--success-bg)";
+  const prioritySymbols = { High: "↑", Medium: "•", Low: "↓" };
 
   return (
     <div style={{ background:"var(--bg-card)", border:`1px solid ${isOverdue(a) ? "var(--danger)" : isDueSoon(a) ? "var(--warning)" : "var(--border)"}`, borderRadius:"var(--radius-lg)", overflow:"hidden", opacity: a.completed ? 0.65 : 1, boxShadow:"var(--shadow)", transition:"all 0.2s" }}>
@@ -591,7 +641,7 @@ function AssignmentCard({ a, expanded, onExpand, onToggle, onEdit, onDelete, sub
             
             <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:8 }}>
               <span style={{ fontSize:11, fontWeight:600, padding:"4px 8px", borderRadius:"6px", background: `${courseColor}22`, color: courseColor }}>{a.course || "No Course"}</span>
-              <span style={{ fontSize:11, fontWeight:600, padding:"4px 8px", borderRadius:"6px", background: priorityBg, color: priorityColor }}>{a.priority}</span>
+              <span style={{ fontSize:11, fontWeight:600, padding:"3px 8px", borderRadius:"6px", background: "var(--bg-main)", color: "var(--text-sub)", border: "1px solid var(--border)" }}>{prioritySymbols[a.priority]} {a.priority}</span>
               {isOverdue(a) && <span style={{ fontSize:11, fontWeight:700, color:"var(--danger)", padding:"4px 0" }}>OVERDUE</span>}
               {isDueSoon(a) && <span style={{ fontSize:11, fontWeight:700, color:"var(--warning)", padding:"4px 0" }}>DUE SOON</span>}
             </div>
@@ -646,41 +696,54 @@ function AssignmentCard({ a, expanded, onExpand, onToggle, onEdit, onDelete, sub
 }
 
 // Settings Component
-function SettingsTab({ courses, courseColors, setCourses, setCourseColors, assignments, mutate }) {
+function SettingsTab({ courses, courseColors, setCourses, setCourseColors, assignments, mutate, saveData }) {
   
   const updateName = (index, val) => {
     const newC = [...courses];
     const oldName = newC[index];
     newC[index] = val;
     setCourses(newC);
-    mutate(assignments.map(a => a.course === oldName ? {...a, course: val} : a));
+    
+    // Automatically update existing tasks to match the renamed course and instantly sync
+    const updatedAssignments = assignments.map(a => a.course === oldName ? {...a, course: val} : a);
+    mutate(updatedAssignments);
+    saveData(updatedAssignments, newC, courseColors);
   };
 
   const updateColor = (index, val) => {
     const newCol = [...courseColors];
     newCol[index] = val;
     setCourseColors(newCol);
+    saveData(assignments, courses, newCol);
   };
 
   const deleteCourse = (index) => {
+    if(!window.confirm(`Are you sure you want to delete ${courses[index]}? Its existing tasks will have a blank course.`)) return;
     const oldName = courses[index];
     const newC = courses.filter((_, i) => i !== index);
+    const newCol = courseColors.filter((_, i) => i !== index);
+    
     setCourses(newC);
-    setCourseColors(courseColors.filter((_, i) => i !== index));
-    // Set associated tasks to have a blank course ("")
-    mutate(assignments.map(a => a.course === oldName ? {...a, course: ""} : a));
+    setCourseColors(newCol);
+    
+    const updatedAssignments = assignments.map(a => a.course === oldName ? {...a, course: ""} : a);
+    mutate(updatedAssignments);
+    saveData(updatedAssignments, newC, newCol);
   };
 
   const addCourse = () => {
-    setCourses([...courses, "New Course"]);
-    setCourseColors([...courseColors, "#6366f1"]);
+    const newC = [...courses, "New Course"];
+    const newCol = [...courseColors, "#6366f1"];
+    setCourses(newC);
+    setCourseColors(newCol);
+    saveData(assignments, newC, newCol);
   };
 
   return (
     <div style={{ maxWidth: 600 }}>
       <div style={{ fontSize:20, fontWeight:700, color:"var(--text-main)", marginBottom:20 }}>Course Settings</div>
       <div style={{ background:"var(--bg-card)", border:"1px solid var(--border)", borderRadius:"var(--radius-lg)", padding:"20px", boxShadow:"var(--shadow)" }}>
-        <p style={{ fontSize:14, color:"var(--text-sub)", marginBottom:20 }}>Manage your courses and their visual colors. Renaming a course will update your existing tasks. Deleting a course will leave its tasks blank.</p>
+        <p style={{ fontSize:14, color:"var(--text-sub)", marginBottom:20 }}>Manage your courses and colors. They will automatically sync to your Google Sheet.</p>
         
         <div style={{ display:"flex", flexDirection:"column", gap:12, marginBottom:20 }}>
           {courses.map((c, i) => (
@@ -809,35 +872,59 @@ function Analytics({ data }) {
 }
 
 function Setup({ urlInput, setUrlInput, onConnect }) {
-  const script = `const SHEET_NAME = "assignments";\n\nfunction doGet(e) {\n  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAME);\n  const data = sheet.getDataRange().getValues();\n  return ContentService.createTextOutput(JSON.stringify(data)).setMimeType(ContentService.MimeType.JSON);\n}\n\nfunction doPost(e) {\n  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAME);\n  try {\n    const payload = JSON.parse(e.postData.contents);\n    if (payload.action === "save") {\n      sheet.clearContents();\n      sheet.getRange(1, 1, payload.rows.length, payload.rows[0].length).setValues(payload.rows);\n      return ContentService.createTextOutput(JSON.stringify({ status: "ok" })).setMimeType(ContentService.MimeType.JSON);\n    }\n  } catch(err) {\n    return ContentService.createTextOutput(JSON.stringify({ status: "error", message: err.toString() })).setMimeType(ContentService.MimeType.JSON);\n  }\n}`;
+  const script = `const SHEET_NAME = "assignments";
+const SETTINGS_NAME = "settings";
+
+function doGet(e) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName(SHEET_NAME);
+  if (!sheet) sheet = ss.insertSheet(SHEET_NAME);
+  let setSheet = ss.getSheetByName(SETTINGS_NAME);
+  if (!setSheet) setSheet = ss.insertSheet(SETTINGS_NAME);
+  
+  return ContentService.createTextOutput(JSON.stringify({
+    assignments: sheet.getDataRange().getValues(),
+    settings: setSheet.getDataRange().getValues()
+  })).setMimeType(ContentService.MimeType.JSON);
+}
+
+function doPost(e) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  try {
+    const payload = JSON.parse(e.postData.contents);
+    if (payload.action === "save") {
+      if (payload.rows) {
+        let sheet = ss.getSheetByName(SHEET_NAME);
+        if (!sheet) sheet = ss.insertSheet(SHEET_NAME);
+        sheet.clearContents();
+        if(payload.rows.length > 0) sheet.getRange(1, 1, payload.rows.length, payload.rows[0].length).setValues(payload.rows);
+      }
+      if (payload.settings) {
+        let setSheet = ss.getSheetByName(SETTINGS_NAME);
+        if (!setSheet) setSheet = ss.insertSheet(SETTINGS_NAME);
+        setSheet.clearContents();
+        if(payload.settings.length > 0) setSheet.getRange(1, 1, payload.settings.length, payload.settings[0].length).setValues(payload.settings);
+      }
+      return ContentService.createTextOutput(JSON.stringify({ status: "ok" })).setMimeType(ContentService.MimeType.JSON);
+    }
+  } catch(err) {
+    return ContentService.createTextOutput(JSON.stringify({ status: "error", message: err.toString() })).setMimeType(ContentService.MimeType.JSON);
+  }
+}`;
 
   return (
     <>
       <style>{globalStyles}</style>
       <div style={{ minHeight:"100vh", background:"var(--bg-main)", display:"flex", alignItems:"center", justifyContent:"center", padding:"1.5rem" }}>
         <div style={{ maxWidth:600, width:"100%", background:"var(--bg-card)", padding:"2.5rem", borderRadius:"var(--radius-lg)", boxShadow:"var(--shadow)", border:"1px solid var(--border)" }}>
-          <div style={{ fontSize:12, fontWeight:700, color:"var(--accent)", letterSpacing:2, marginBottom:12, fontFamily:"var(--font-mono)" }}>SETUP</div>
-          <h1 style={{ fontSize:28, fontWeight:800, color:"var(--text-main)", marginBottom:8 }}>EE Assignment Tracker</h1>
-          <p style={{ fontSize:15, color:"var(--text-sub)", marginBottom:"2.5rem", lineHeight:1.6 }}>Connect to Google Sheets for cross-device sync. Follow the steps below to get started.</p>
-
-          {[
-            ["1", "Create a Google Sheet", "Open Google Sheets and create a new spreadsheet. Rename the first tab to exactly: assignments"],
-            ["2", "Add the Apps Script", "In the sheet, go to Extensions → Apps Script. Replace any existing code with the script below, then click Save."],
-            ["3", "Deploy as Web App", 'Click Deploy → New Deployment → Web App. Set "Who has access" to Anyone. Click Deploy and copy the URL.'],
-          ].map(([n, title, desc]) => (
-            <div key={n} style={{ display:"flex", gap:16, marginBottom:20 }}>
-              <div style={{ width:32, height:32, borderRadius:"50%", background:"var(--accent-bg)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:14, fontWeight:700, color:"var(--accent)", flexShrink:0 }}>{n}</div>
-              <div>
-                <div style={{ fontSize:15, fontWeight:600, color:"var(--text-main)", marginBottom:4 }}>{title}</div>
-                <div style={{ fontSize:14, color:"var(--text-sub)", lineHeight:1.6 }}>{desc}</div>
-              </div>
-            </div>
-          ))}
+          <div style={{ fontSize:12, fontWeight:700, color:"var(--accent)", letterSpacing:2, marginBottom:12, fontFamily:"var(--font-mono)" }}>SETUP REQUIRED</div>
+          <h1 style={{ fontSize:28, fontWeight:800, color:"var(--text-main)", marginBottom:8 }}>Update Your Connection</h1>
+          <p style={{ fontSize:15, color:"var(--text-sub)", marginBottom:"2.5rem", lineHeight:1.6 }}>To sync your new custom Course Settings, you must update your Google Apps Script using the code below, and create a <strong>New Deployment</strong>.</p>
 
           <pre style={{ background:"var(--bg-input)", border:"1px solid var(--border)", borderRadius:"var(--radius-md)", padding:16, fontSize:12, color:"var(--text-muted)", overflow:"auto", marginBottom:"2rem", lineHeight:1.5, fontFamily:"var(--font-mono)" }}>{script}</pre>
 
           <div style={{ display:"flex", gap:12, flexDirection: window.innerWidth < 600 ? "column" : "row" }}>
-            <input value={urlInput} onChange={e => setUrlInput(e.target.value)} placeholder="Paste your Apps Script Web App URL here…" style={{ flex:1, background:"var(--bg-input)", border:"1px solid var(--border)", borderRadius:"var(--radius-md)", padding:"14px 16px", color:"var(--text-main)", fontSize:14, outline:"none", minHeight:"48px" }} />
+            <input value={urlInput} onChange={e => setUrlInput(e.target.value)} placeholder="Paste your NEW Apps Script Web App URL here…" style={{ flex:1, background:"var(--bg-input)", border:"1px solid var(--border)", borderRadius:"var(--radius-md)", padding:"14px 16px", color:"var(--text-main)", fontSize:14, outline:"none", minHeight:"48px" }} />
             <button onClick={onConnect} style={{ background:"var(--accent)", border:"none", borderRadius:"var(--radius-md)", padding:"14px 28px", color:"#fff", fontSize:15, cursor:"pointer", fontWeight:600, whiteSpace:"nowrap", minHeight:"48px" }}>Connect</button>
           </div>
         </div>
