@@ -363,12 +363,7 @@ export default function App() {
             {saveStatus === "saved" && <span style={{ color:"var(--success)" }}>Saved ✓</span>}
             {saveStatus === "error" && <span style={{ color:"var(--danger)" }}>Save failed</span>}
           </div>
-          <button 
-            onClick={() => { localStorage.removeItem(STORAGE_KEY); window.location.reload(); }} 
-            style={{ background:"transparent", border:"none", color:"var(--danger)", fontSize:12, cursor:"pointer", marginTop:12 }}
-          >
-            Disconnect Sheet
-          </button>
+      
         </div>
 
         {/* Main */}
