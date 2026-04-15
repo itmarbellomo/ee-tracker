@@ -69,14 +69,16 @@ export default function App() {
     if (!scriptUrl) return;
     setSaveStatus("saving");
     try {
-      await fetch(scriptUrl, {
-        method: "POST", mode: "no-cors",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "save", rows: assignmentsToRows(newAssignments) })
-      });
+      const rows = assignmentsToRows(newAssignments);
+      const encoded = encodeURIComponent(JSON.stringify(rows));
+      const url = `${scriptUrl}?action=save&data=${encoded}`;
+      await fetch(url, { method: "GET" });
       setSaveStatus("saved");
       setTimeout(() => setSaveStatus("idle"), 2000);
-    } catch { setSaveStatus("error"); setTimeout(() => setSaveStatus("idle"), 3000); }
+    } catch {
+      setSaveStatus("error");
+      setTimeout(() => setSaveStatus("idle"), 3000);
+    }
   }, [scriptUrl]);
 
   const mutate = useCallback((newList) => { setAssignments(newList); saveData(newList); }, [saveData]);
