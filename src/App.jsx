@@ -3,11 +3,11 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 const STORAGE_KEY = "ee-tracker-script-url";
 const COLS = ["id","title","course","dueDate","priority","description","completed","completedAt","createdAt","subtasks"];
 
-const COURSES = ["Signals & Systems","Circuit Theory","Digital Logic","Electromagnetics","Control Systems","Power Electronics","Microprocessors","Linear Algebra","Other"];
+const DEFAULT_COURSES = ["Signals & Systems","Circuit Theory","Digital Logic","Electromagnetics","Control Systems","Power Electronics","Microprocessors","Linear Algebra","Other"];
 const PRIORITIES = ["High","Medium","Low"];
-const COURSE_COLORS = ["#7f77dd","#10b981","#3b82f6","#f97316","#d97706","#ec4899","#84cc16","#06b6d4","#888780"];
+const DEFAULT_COLORS = ["#7f77dd","#10b981","#3b82f6","#f97316","#d97706","#ec4899","#84cc16","#06b6d4","#888780"];
 
-// CSS injected into the document for media queries and light/dark mode variables
+// CSS injected into the document for media queries, light/dark mode, and iOS zoom prevention
 const globalStyles = `
   :root {
     --bg-main: #f3f4f6;
@@ -59,7 +59,9 @@ const globalStyles = `
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   body { margin: 0; background-color: var(--bg-main); color: var(--text-main); font-family: var(--font-ui); -webkit-font-smoothing: antialiased; }
   
-  input, select, textarea, button { font-family: var(--font-ui); }
+  /* CRITICAL: font-size 16px prevents iPhone Safari from auto-zooming on tap */
+  input, select, textarea { font-family: var(--font-ui); font-size: 16px !important; touch-action: manipulation; }
+  button { font-family: var(--font-ui); touch-action: manipulation; }
   
   .app-container { display: flex; flex-direction: row; min-height: 100vh; }
   .sidebar { width: 240px; background: var(--bg-card); border-right: 1px solid var(--border); padding: 1.5rem; display: flex; flex-direction: column; gap: 12px; flex-shrink: 0; }
@@ -74,9 +76,10 @@ const globalStyles = `
   @media (max-width: 768px) {
     .app-container { flex-direction: column; }
     .sidebar { width: 100%; border-right: none; border-bottom: 1px solid var(--border); padding: 1rem; position: sticky; top: 0; z-index: 50; flex-direction: row; align-items: center; flex-wrap: wrap; justify-content: space-between; box-shadow: var(--shadow); }
-    .sidebar-header { margin-bottom: 0 !important; }
-    .sidebar-tabs { display: flex; gap: 8px; flex-direction: row !important; }
-    .sidebar-status { display: none; } /* Hide on mobile to save space */
+    .sidebar-header { margin-bottom: 0 !important; width: 100%; }
+    .sidebar-tabs { display: flex; gap: 8px; flex-direction: row !important; width: 100%; margin-top: 8px; overflow-x: auto; padding-bottom: 4px; }
+    .sidebar-tabs button { flex: 1; white-space: nowrap; text-align: center !important; }
+    .sidebar-status { display: none; } 
     .main-content { padding: 1rem; height: auto; }
     
     .grid-4 { grid-template-columns: repeat(2, 1fr); }
@@ -86,7 +89,6 @@ const globalStyles = `
     .controls-row > div { display: flex; justify-content: space-between; width: 100%; overflow-x: auto; padding-bottom: 4px; }
   }
 
-  /* Custom Scrollbar */
   ::-webkit-scrollbar { width: 6px; height: 6px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 10px; }
@@ -94,7 +96,31 @@ const globalStyles = `
 
 function uid() { return Math.random().toString(36).slice(2,10); }
 function today() { return new Date().toISOString().slice(0,10); }
-function fmt(ts) { if (!ts) return "—"; const d = new Date(ts); return d.toLocaleDateString(undefined,{month:"short",day:"numeric"}) + " " + d.toLocaleTimeString(undefined,{hour:"2-digit",minute:"2-digit"}); }
+
+// Universal Date Normalizer: Forces YYYY-MM-DD format regardless of origin
+function normalizeDate(d) {
+  if (!d) return "";
+  const str = String(d);
+  if (str.includes("T")) return str.split("T")[0];
+  const parsed = new Date(str);
+  if (!isNaN(parsed.getTime())) return parsed.toISOString().split("T")[0];
+  return str;
+}
+
+// Format Date for Display: Converts YYYY-MM-DD to DD/MM/YYYY
+function displayDate(d) {
+  if (!d) return "—";
+  const parts = String(d).split("-");
+  if (parts.length === 3) return `${parts[2]}/${parts[1]}/${parts[0]}`;
+  return d;
+}
+
+function fmt(ts) { 
+  if (!ts) return "—"; 
+  const d = new Date(ts); 
+  return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()} ` + d.toLocaleTimeString(undefined,{hour:"2-digit",minute:"2-digit"}); 
+}
+
 function dayKey(ts) { return new Date(ts).toISOString().slice(0,10); }
 function isOverdue(a) { return !a.completed && a.dueDate < today(); }
 function isDueSoon(a) { if (a.completed || isOverdue(a)) return false; const diff = (new Date(a.dueDate) - new Date(today())) / 86400000; return diff <= 2; }
@@ -102,7 +128,7 @@ function pct(a) { if (!a.subtasks.length) return a.completed ? 100 : 0; return M
 
 function rowsToAssignments(rows) {
   return rows.slice(1).filter(r => r[0]).map(r => ({
-    id: r[0], title: r[1], course: r[2], dueDate: r[3], priority: r[4],
+    id: r[0], title: r[1], course: r[2], dueDate: normalizeDate(r[3]), priority: r[4],
     description: r[5], completed: r[6] === "true" || r[6] === true,
     completedAt: r[7] || null, createdAt: r[8],
     subtasks: (() => { try { return JSON.parse(r[9] || "[]"); } catch { return []; } })()
@@ -118,6 +144,35 @@ function assignmentsToRows(assignments) {
   return [header, ...rows];
 }
 
+// Synthesized Audio logic (No external files needed)
+function playSound(type) {
+  try {
+    const ctx = window.audioCtx || (window.audioCtx = new (window.AudioContext || window.webkitAudioContext)());
+    if (ctx.state === 'suspended') ctx.resume();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    
+    if (type === 'task') {
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(523.25, ctx.currentTime); // C5
+      osc.frequency.exponentialRampToValueAtTime(1046.50, ctx.currentTime + 0.15); // C6
+      gain.gain.setValueAtTime(0.5, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.4);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.4);
+    } else {
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(880, ctx.currentTime); // A5
+      gain.gain.setValueAtTime(0.3, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.15);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.15);
+    }
+  } catch(e) { console.error("Audio error:", e); }
+}
+
 export default function App() {
   const [scriptUrl, setScriptUrl] = useState(null);
   const [urlInput, setUrlInput] = useState("");
@@ -125,13 +180,24 @@ export default function App() {
   const [saveStatus, setSaveStatus] = useState("idle");
   const [connected, setConnected] = useState(null);
   const [tab, setTab] = useState("assignments");
-  const [filter, setFilter] = useState("All");
-  const [groupBy, setGroupBy] = useState("dueDate");
+  const [filter, setFilter] = useState("All"); // All, Pending, Completed, Overdue, This Week
+  const [groupBy, setGroupBy] = useState("dueDate"); // dueDate, priority, course
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId] = useState(null);
-  const [form, setForm] = useState({ title:"", course: COURSES[0], dueDate:"", priority:"Medium", description:"" });
   const [expandedId, setExpandedId] = useState(null);
   const [subtaskInputs, setSubtaskInputs] = useState({});
+
+  // Settings State
+  const [courses, setCourses] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("ee-courses")) || DEFAULT_COURSES; } catch { return DEFAULT_COURSES; }
+  });
+  const [courseColors, setCourseColors] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("ee-colors")) || DEFAULT_COLORS; } catch { return DEFAULT_COLORS; }
+  });
+  const [form, setForm] = useState({ title:"", course: courses.length > 0 ? courses[0] : "", dueDate:"", priority:"Medium", description:"" });
+
+  useEffect(() => { localStorage.setItem("ee-courses", JSON.stringify(courses)); }, [courses]);
+  useEffect(() => { localStorage.setItem("ee-colors", JSON.stringify(courseColors)); }, [courseColors]);
 
   useEffect(() => {
     const saved = localStorage.getItem(STORAGE_KEY);
@@ -183,7 +249,7 @@ export default function App() {
     const now = new Date().toISOString();
     const a = { id: uid(), ...form, completed: false, completedAt: null, createdAt: now, subtasks: [] };
     mutate([...assignments, a]);
-    setForm({ title:"", course: COURSES[0], dueDate:"", priority:"Medium", description:"" });
+    setForm({ title:"", course: courses.length > 0 ? courses[0] : "", dueDate:"", priority:"Medium", description:"" });
     setShowForm(false);
   }
 
@@ -198,6 +264,8 @@ export default function App() {
 
   function toggleComplete(id) {
     const now = new Date().toISOString();
+    const target = assignments.find(a => a.id === id);
+    if (target && !target.completed) playSound('task');
     mutate(assignments.map(a => a.id !== id ? a : {
       ...a, completed: !a.completed, completedAt: !a.completed ? now : null
     }));
@@ -214,6 +282,10 @@ export default function App() {
 
   function toggleSubtask(aId, sId) {
     const now = new Date().toISOString();
+    const targetA = assignments.find(a => a.id === aId);
+    const targetS = targetA?.subtasks.find(s => s.id === sId);
+    if (targetS && !targetS.completed) playSound('subtask');
+
     mutate(assignments.map(a => a.id !== aId ? a : {
       ...a, subtasks: a.subtasks.map(s => s.id !== sId ? s : {
         ...s, completed: !s.completed, completedAt: !s.completed ? now : null
@@ -225,39 +297,63 @@ export default function App() {
     mutate(assignments.map(a => a.id !== aId ? a : { ...a, subtasks: a.subtasks.filter(s => s.id !== sId) }));
   }
 
+  const summary = useMemo(() => {
+    return {
+      total: assignments.length,
+      pending: assignments.filter(a => !a.completed).length,
+      completed: assignments.filter(a => a.completed).length,
+      overdue: assignments.filter(isOverdue).length,
+      thisWeek: assignments.filter(a => {
+        if(a.completed) return false;
+        const d = new Date(a.dueDate), now = new Date();
+        const diff = (d - now) / 86400000;
+        return diff >= -1 && diff <= 7;
+      }).length
+    };
+  }, [assignments]);
+
   const filtered = useMemo(() => {
     return assignments.filter(a => {
       if (filter === "Pending") return !a.completed;
       if (filter === "Completed") return a.completed;
       if (filter === "Overdue") return isOverdue(a);
+      if (filter === "This Week") {
+        if(a.completed) return false;
+        const d = new Date(a.dueDate), now = new Date();
+        const diff = (d - now) / 86400000;
+        return diff >= -1 && diff <= 7;
+      }
       return true;
     });
   }, [assignments, filter]);
 
   const grouped = useMemo(() => {
+    const g = {};
     if (groupBy === "course") {
-      const g = {};
-      filtered.forEach(a => { (g[a.course] = g[a.course] || []).push(a); });
+      filtered.forEach(a => { 
+        const cKey = a.course || "No Course";
+        (g[cKey] = g[cKey] || []).push(a); 
+      });
       return g;
     }
-    const g = {};
-    [...filtered].sort((a,b) => a.dueDate.localeCompare(b.dueDate)).forEach(a => {
+    
+    if (groupBy === "priority") {
+      const pOrder = { High: 1, Medium: 2, Low: 3 };
+      g["High Priority"] = []; g["Medium Priority"] = []; g["Low Priority"] = [];
+      [...filtered].sort((a,b) => (a.dueDate || "9999").localeCompare(b.dueDate || "9999")).forEach(a => {
+        if(a.priority === "High") g["High Priority"].push(a);
+        else if (a.priority === "Medium") g["Medium Priority"].push(a);
+        else g["Low Priority"].push(a);
+      });
+      return Object.fromEntries(Object.entries(g).filter(([_,v]) => v.length > 0));
+    }
+    
+    [...filtered].sort((a,b) => (a.dueDate || "9999").localeCompare(b.dueDate || "9999")).forEach(a => {
       const key = a.dueDate || "No date";
       (g[key] = g[key] || []).push(a);
     });
     return g;
   }, [filtered, groupBy]);
-
-  const summary = useMemo(() => ({
-    total: assignments.length,
-    completed: assignments.filter(a => a.completed).length,
-    overdue: assignments.filter(isOverdue).length,
-    thisWeek: assignments.filter(a => {
-      const d = new Date(a.dueDate), now = new Date();
-      const diff = (d - now) / 86400000;
-      return diff >= 0 && diff <= 7;
-    }).length
-  }), [assignments]);
 
   const analytics = useMemo(() => {
     const allTimestamps = [];
@@ -275,7 +371,7 @@ export default function App() {
     const last14 = Array.from({ length: 14 }, (_, i) => {
       const d = new Date(); d.setDate(d.getDate() - 13 + i);
       const k = d.toISOString().slice(0,10);
-      return { date: k, label: d.toLocaleDateString(undefined,{month:"short",day:"numeric"}), count: dayMap[k] || 0 };
+      return { date: k, label: `${d.getDate()}/${d.getMonth()+1}`, count: dayMap[k] || 0 };
     });
 
     const hourMap = Array(24).fill(0);
@@ -285,7 +381,10 @@ export default function App() {
     allTimestamps.forEach(({ ts }) => { dowMap[new Date(ts).getDay()]++; });
 
     const courseMap = {};
-    allTimestamps.forEach(({ course }) => { courseMap[course] = (courseMap[course] || 0) + 1; });
+    allTimestamps.forEach(({ course }) => { 
+      const cKey = course || "No Course";
+      courseMap[cKey] = (courseMap[cKey] || 0) + 1; 
+    });
 
     const thisWeekTotal = last14.slice(7).reduce((s,d) => s + d.count, 0);
     const lastWeekTotal = last14.slice(0,7).reduce((s,d) => s + d.count, 0);
@@ -325,15 +424,7 @@ export default function App() {
     const peakHour = hourMap.indexOf(Math.max(...hourMap));
     const peakDay = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][dowMap.indexOf(Math.max(...dowMap))];
 
-    const insightParts = [];
-    if (peakHour >= 20) insightParts.push("You're a night owl — most work happens after 8 PM.");
-    else if (peakHour < 12) insightParts.push("You're a morning person — tasks get done early in the day.");
-    else insightParts.push(`You tend to work in the ${peakHour < 17 ? "afternoon" : "evening"}.`);
-    if (procScore) insightParts.push(`Your completion style: ${procScore.label}.`);
-    const topCourse = Object.entries(courseMap).sort((a,b) => b[1]-a[1])[0];
-    if (topCourse) insightParts.push(`Most active course: ${topCourse[0]}.`);
-
-    return { last14, hourMap, dowMap, courseMap, thisWeekTotal, lastWeekTotal, weekChange, streaks, procScore, avgPerDay, peakHour, peakDay, insight: insightParts.join(" ") };
+    return { last14, hourMap, dowMap, courseMap, thisWeekTotal, lastWeekTotal, weekChange, streaks, procScore, avgPerDay, peakHour, peakDay, insight: null };
   }, [assignments]);
 
   if (!scriptUrl) return <Setup urlInput={urlInput} setUrlInput={setUrlInput} onConnect={connectUrl} />;
@@ -345,16 +436,19 @@ export default function App() {
         {/* Sidebar / Top Nav */}
         <div className="sidebar">
           <div className="sidebar-header" style={{ marginBottom:"1rem" }}>
-            <div style={{ fontSize:13, fontWeight:700, color:"var(--accent)", letterSpacing:1.5, marginBottom:4, fontFamily:"var(--font-mono)" }}>EE TRACKER</div>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:4 }}>
+              <div style={{ fontSize:14, fontWeight:800, color:"var(--accent)", letterSpacing:1.5, fontFamily:"var(--font-mono)" }}>EE TRACKER</div>
+              <div style={{ fontSize:11, fontWeight:600, color:"var(--text-sub)", background:"var(--bg-input)", padding:"4px 8px", borderRadius:"6px" }}>TOTAL: {summary.total}</div>
+            </div>
             <div className="sidebar-status" style={{ fontSize:11, color: connected ? "var(--success)" : "var(--danger)", display:"flex", alignItems:"center", gap:6 }}>
               <div style={{ width:8, height:8, borderRadius:"50%", background: connected ? "var(--success)" : "var(--danger)" }} />
               {connected ? "Sheets connected" : "Disconnected"}
             </div>
           </div>
           <div className="sidebar-tabs" style={{ display:"flex", flexDirection:"column", gap:8, width:"100%" }}>
-            {["assignments","analytics"].map(t => (
+            {[["assignments", "📋 Tasks"], ["analytics", "📊 Analytics"], ["settings", "⚙️ Settings"]].map(([t, label]) => (
               <button key={t} onClick={() => setTab(t)} style={{ background: tab===t ? "var(--bg-input)" : "transparent", border: tab===t ? "1px solid var(--border)" : "1px solid transparent", borderRadius:"var(--radius-md)", padding:"12px 14px", color: tab===t ? "var(--text-main)" : "var(--text-sub)", fontSize:14, fontWeight:500, cursor:"pointer", textAlign:"left", textTransform:"capitalize", width:"100%", transition:"all 0.2s" }}>
-                {t === "assignments" ? "📋 Assignments" : "📊 Analytics"}
+                {label}
               </button>
             ))}
           </div>
@@ -363,18 +457,25 @@ export default function App() {
             {saveStatus === "saved" && <span style={{ color:"var(--success)" }}>Saved ✓</span>}
             {saveStatus === "error" && <span style={{ color:"var(--danger)" }}>Save failed</span>}
           </div>
-      
+          <button onClick={() => { localStorage.removeItem(STORAGE_KEY); window.location.reload(); }} className="sidebar-status" style={{ background:"transparent", border:"none", color:"var(--danger)", fontSize:13, cursor:"pointer", marginTop:12, fontWeight: 600, padding: "8px" }}>
+            Disconnect
+          </button>
         </div>
 
-        {/* Main */}
+        {/* Main Content */}
         <div className="main-content">
           {tab === "assignments" ? (
             <>
-              {/* Summary bar */}
+              {/* Filter Stat Cards */}
               <div className="grid-4" style={{ marginBottom:"2rem" }}>
-                {[["Total", summary.total, "var(--accent)"],["Done", summary.completed, "var(--success)"],["Overdue", summary.overdue, "var(--danger)"],["This Week", summary.thisWeek, "var(--warning)"]].map(([l,v,c]) => (
-                  <div key={l} style={{ background:"var(--bg-card)", border:`1px solid var(--border)`, borderRadius:"var(--radius-lg)", padding:"16px", boxShadow:"var(--shadow)" }}>
-                    <div style={{ fontSize:12, color:"var(--text-sub)", marginBottom:4, fontWeight:500 }}>{l}</div>
+                {[
+                  { id: "Pending", l: "Pending", v: summary.pending, c: "var(--accent)" },
+                  { id: "Completed", l: "Done", v: summary.completed, c: "var(--success)" },
+                  { id: "Overdue", l: "Overdue", v: summary.overdue, c: "var(--danger)" },
+                  { id: "This Week", l: "This Week", v: summary.thisWeek, c: "var(--warning)" }
+                ].map(({ id, l, v, c }) => (
+                  <div key={id} onClick={() => setFilter(filter === id ? "All" : id)} style={{ background: filter === id ? `${c}15` : "var(--bg-card)", border:`2px solid ${filter === id ? c : "var(--border)"}`, borderRadius:"var(--radius-lg)", padding:"16px", boxShadow:"var(--shadow)", cursor:"pointer", transition:"all 0.2s" }}>
+                    <div style={{ fontSize:12, color:"var(--text-sub)", marginBottom:4, fontWeight:600 }}>{l}</div>
                     <div style={{ fontSize:28, fontWeight:700, color:c, fontFamily:"var(--font-mono)" }}>{v}</div>
                   </div>
                 ))}
@@ -382,19 +483,14 @@ export default function App() {
 
               {/* Controls */}
               <div className="controls-row" style={{ marginBottom:"1.5rem" }}>
-                <button onClick={() => { setShowForm(true); setEditId(null); setForm({ title:"", course:COURSES[0], dueDate:"", priority:"Medium", description:"" }); }}
+                <button onClick={() => { setShowForm(true); setEditId(null); setForm({ title:"", course:courses.length > 0 ? courses[0] : "", dueDate:"", priority:"Medium", description:"" }); }}
                   style={{ background:"var(--accent)", border:"none", borderRadius:"var(--radius-md)", padding:"12px 20px", color:"#fff", fontSize:14, cursor:"pointer", fontWeight:600, boxShadow:"var(--shadow)", flexShrink:0 }}>
                   + New Assignment
                 </button>
-                <div style={{ display:"flex", gap:6 }}>
-                  {["All","Pending","Completed","Overdue"].map(f => (
-                    <button key={f} onClick={() => setFilter(f)} style={{ background: filter===f ? "var(--bg-input)" : "transparent", border:`1px solid ${filter===f ? "var(--border)" : "transparent"}`, borderRadius:"var(--radius-md)", padding:"8px 14px", color: filter===f ? "var(--text-main)" : "var(--text-sub)", fontSize:13, fontWeight:500, cursor:"pointer", whiteSpace:"nowrap" }}>{f}</button>
-                  ))}
-                </div>
                 <div style={{ marginLeft:"auto", display:"flex", gap:6 }}>
-                  {["dueDate","course"].map(g => (
+                  {["dueDate","priority","course"].map(g => (
                     <button key={g} onClick={() => setGroupBy(g)} style={{ background: groupBy===g ? "var(--bg-input)" : "transparent", border:`1px solid ${groupBy===g ? "var(--border)" : "transparent"}`, borderRadius:"var(--radius-md)", padding:"8px 14px", color: groupBy===g ? "var(--text-main)" : "var(--text-sub)", fontSize:13, fontWeight:500, cursor:"pointer", whiteSpace:"nowrap" }}>
-                      {g === "dueDate" ? "By Date" : "By Course"}
+                      {g === "dueDate" ? "By Date" : g === "priority" ? "By Priority" : "By Course"}
                     </button>
                   ))}
                 </div>
@@ -407,11 +503,12 @@ export default function App() {
                   <div className="form-grid" style={{ marginBottom:12 }}>
                     <input value={form.title} onChange={e => setForm(p => ({...p,title:e.target.value}))} placeholder="Title*" style={inputStyle} />
                     <select value={form.course} onChange={e => setForm(p => ({...p,course:e.target.value}))} style={inputStyle}>
-                      {COURSES.map(c => <option key={c}>{c}</option>)}
+                      <option value="">No Course</option>
+                      {courses.map(c => <option key={c} value={c}>{c}</option>)}
                     </select>
                     <input type="date" value={form.dueDate} onChange={e => setForm(p => ({...p,dueDate:e.target.value}))} style={inputStyle} />
                     <select value={form.priority} onChange={e => setForm(p => ({...p,priority:e.target.value}))} style={inputStyle}>
-                      {PRIORITIES.map(p => <option key={p}>{p}</option>)}
+                      {PRIORITIES.map(p => <option key={p} value={p}>{p}</option>)}
                     </select>
                   </div>
                   <textarea value={form.description} onChange={e => setForm(p => ({...p,description:e.target.value}))} placeholder="Description (optional)" rows={3} style={{ ...inputStyle, resize:"vertical" }} />
@@ -426,16 +523,18 @@ export default function App() {
 
               {/* Assignment groups */}
               {Object.keys(grouped).length === 0 && (
-                <div style={{ textAlign:"center", color:"var(--text-muted)", fontSize:15, padding:"4rem 1rem" }}>No assignments here yet. 🎉</div>
+                <div style={{ textAlign:"center", color:"var(--text-muted)", fontSize:15, padding:"4rem 1rem" }}>No assignments match this filter. 🎉</div>
               )}
               {Object.entries(grouped).map(([group, items]) => (
                 <div key={group} style={{ marginBottom:"2rem" }}>
                   <div style={{ fontSize:12, fontWeight:700, color:"var(--text-sub)", letterSpacing:1.5, marginBottom:12, textTransform:"uppercase", borderBottom:"1px solid var(--border)", paddingBottom:8 }}>
-                    {groupBy === "dueDate" ? (group === today() ? "Today" : group) : group}
+                    {groupBy === "dueDate" ? (group === today() ? "Today" : displayDate(group)) : group}
                   </div>
                   <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
                     {items.map(a => <AssignmentCard key={a.id} a={a}
                       expanded={expandedId === a.id}
+                      courses={courses}
+                      courseColors={courseColors}
                       onExpand={() => setExpandedId(expandedId === a.id ? null : a.id)}
                       onToggle={() => toggleComplete(a.id)}
                       onEdit={() => { setEditId(a.id); setForm({ title:a.title, course:a.course, dueDate:a.dueDate, priority:a.priority, description:a.description }); setShowForm(true); window.scrollTo({top:0, behavior:'smooth'}); }}
@@ -450,8 +549,17 @@ export default function App() {
                 </div>
               ))}
             </>
+          ) : tab === "settings" ? (
+            <SettingsTab 
+              courses={courses} 
+              courseColors={courseColors} 
+              setCourses={setCourses} 
+              setCourseColors={setCourseColors} 
+              assignments={assignments}
+              mutate={mutate}
+            />
           ) : (
-            <Analytics data={analytics} />
+            <Analytics data={{...analytics, courses, courseColors}} />
           )}
         </div>
       </div>
@@ -459,12 +567,12 @@ export default function App() {
   );
 }
 
-const inputStyle = { background:"var(--bg-input)", border:"1px solid var(--border)", borderRadius:"var(--radius-md)", padding:"12px 14px", color:"var(--text-main)", fontSize:15, outline:"none", width:"100%", transition:"border 0.2s", minHeight:"44px" };
+const inputStyle = { background:"var(--bg-input)", border:"1px solid var(--border)", borderRadius:"var(--radius-md)", padding:"12px 14px", color:"var(--text-main)", outline:"none", width:"100%", transition:"border 0.2s", minHeight:"44px" };
 
-function AssignmentCard({ a, expanded, onExpand, onToggle, onEdit, onDelete, subtaskInput, onSubtaskInput, onAddSubtask, onToggleSubtask, onDeleteSubtask }) {
+function AssignmentCard({ a, expanded, onExpand, onToggle, onEdit, onDelete, subtaskInput, onSubtaskInput, onAddSubtask, onToggleSubtask, onDeleteSubtask, courses, courseColors }) {
   const p = pct(a);
-  const courseIdx = COURSES.indexOf(a.course) % COURSE_COLORS.length;
-  const courseColor = COURSE_COLORS[courseIdx];
+  const courseIdx = courses.indexOf(a.course);
+  const courseColor = courseIdx >= 0 ? courseColors[courseIdx % courseColors.length] : "#888780";
   const priorityColor = a.priority === "High" ? "var(--danger)" : a.priority === "Medium" ? "var(--warning)" : "var(--success)";
   const priorityBg = a.priority === "High" ? "var(--danger-bg)" : a.priority === "Medium" ? "var(--warning-bg)" : "var(--success-bg)";
 
@@ -472,7 +580,6 @@ function AssignmentCard({ a, expanded, onExpand, onToggle, onEdit, onDelete, sub
     <div style={{ background:"var(--bg-card)", border:`1px solid ${isOverdue(a) ? "var(--danger)" : isDueSoon(a) ? "var(--warning)" : "var(--border)"}`, borderRadius:"var(--radius-lg)", overflow:"hidden", opacity: a.completed ? 0.65 : 1, boxShadow:"var(--shadow)", transition:"all 0.2s" }}>
       <div style={{ padding:"16px" }}>
         <div style={{ display:"flex", alignItems:"flex-start", gap:14 }}>
-          {/* Enhanced Touch Target for Checkbox */}
           <button onClick={onToggle} style={{ width:26, height:26, borderRadius:"50%", border:`2px solid ${a.completed ? "var(--success)" : "var(--text-muted)"}`, background: a.completed ? "var(--success)" : "transparent", cursor:"pointer", flexShrink:0, marginTop:2, display:"flex", alignItems:"center", justifyContent:"center", padding:0 }}>
             {a.completed && <span style={{ color:"#fff", fontSize:14, lineHeight:1, fontWeight:800 }}>✓</span>}
           </button>
@@ -483,13 +590,13 @@ function AssignmentCard({ a, expanded, onExpand, onToggle, onEdit, onDelete, sub
             </div>
             
             <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:8 }}>
-              <span style={{ fontSize:11, fontWeight:600, padding:"4px 8px", borderRadius:"6px", background: `${courseColor}22`, color: courseColor }}>{a.course}</span>
+              <span style={{ fontSize:11, fontWeight:600, padding:"4px 8px", borderRadius:"6px", background: `${courseColor}22`, color: courseColor }}>{a.course || "No Course"}</span>
               <span style={{ fontSize:11, fontWeight:600, padding:"4px 8px", borderRadius:"6px", background: priorityBg, color: priorityColor }}>{a.priority}</span>
               {isOverdue(a) && <span style={{ fontSize:11, fontWeight:700, color:"var(--danger)", padding:"4px 0" }}>OVERDUE</span>}
               {isDueSoon(a) && <span style={{ fontSize:11, fontWeight:700, color:"var(--warning)", padding:"4px 0" }}>DUE SOON</span>}
             </div>
             
-            <div style={{ fontSize:13, color:"var(--text-sub)", fontFamily:"var(--font-mono)" }}>Due: {a.dueDate}</div>
+            <div style={{ fontSize:13, color:"var(--text-sub)", fontFamily:"var(--font-mono)" }}>Due: {displayDate(a.dueDate)}</div>
             
             {a.subtasks.length > 0 && (
               <div style={{ marginTop:12 }}>
@@ -538,11 +645,66 @@ function AssignmentCard({ a, expanded, onExpand, onToggle, onEdit, onDelete, sub
   );
 }
 
+// Settings Component
+function SettingsTab({ courses, courseColors, setCourses, setCourseColors, assignments, mutate }) {
+  
+  const updateName = (index, val) => {
+    const newC = [...courses];
+    const oldName = newC[index];
+    newC[index] = val;
+    setCourses(newC);
+    mutate(assignments.map(a => a.course === oldName ? {...a, course: val} : a));
+  };
+
+  const updateColor = (index, val) => {
+    const newCol = [...courseColors];
+    newCol[index] = val;
+    setCourseColors(newCol);
+  };
+
+  const deleteCourse = (index) => {
+    const oldName = courses[index];
+    const newC = courses.filter((_, i) => i !== index);
+    setCourses(newC);
+    setCourseColors(courseColors.filter((_, i) => i !== index));
+    // Set associated tasks to have a blank course ("")
+    mutate(assignments.map(a => a.course === oldName ? {...a, course: ""} : a));
+  };
+
+  const addCourse = () => {
+    setCourses([...courses, "New Course"]);
+    setCourseColors([...courseColors, "#6366f1"]);
+  };
+
+  return (
+    <div style={{ maxWidth: 600 }}>
+      <div style={{ fontSize:20, fontWeight:700, color:"var(--text-main)", marginBottom:20 }}>Course Settings</div>
+      <div style={{ background:"var(--bg-card)", border:"1px solid var(--border)", borderRadius:"var(--radius-lg)", padding:"20px", boxShadow:"var(--shadow)" }}>
+        <p style={{ fontSize:14, color:"var(--text-sub)", marginBottom:20 }}>Manage your courses and their visual colors. Renaming a course will update your existing tasks. Deleting a course will leave its tasks blank.</p>
+        
+        <div style={{ display:"flex", flexDirection:"column", gap:12, marginBottom:20 }}>
+          {courses.map((c, i) => (
+            <div key={i} style={{ display:"flex", alignItems:"center", gap:12 }}>
+              <input type="color" value={courseColors[i]} onChange={e => updateColor(i, e.target.value)} style={{ width:40, height:40, padding:0, border:"none", borderRadius:8, cursor:"pointer", background:"transparent" }} />
+              <input value={c} onChange={e => updateName(i, e.target.value)} style={{ ...inputStyle, flex:1 }} />
+              <button onClick={() => deleteCourse(i)} style={{ background:"var(--danger-bg)", border:"none", borderRadius:8, color:"var(--danger)", width:40, height:40, fontWeight:700, cursor:"pointer" }}>✕</button>
+            </div>
+          ))}
+        </div>
+        
+        <button onClick={addCourse} style={{ background:"var(--accent-bg)", color:"var(--accent)", border:"none", borderRadius:"var(--radius-md)", padding:"12px 20px", fontSize:14, fontWeight:600, cursor:"pointer", width:"100%" }}>
+          + Add Course
+        </button>
+      </div>
+    </div>
+  );
+}
+
 const iconBtn = { background:"var(--bg-input)", border:"1px solid var(--border)", borderRadius:"8px", color:"var(--text-sub)", cursor:"pointer", fontSize:12, padding:"8px 12px", display:"flex", alignItems:"center", justifyContent:"center" };
 const actionBtn = { background:"var(--bg-card)", border:"1px solid var(--border)", borderRadius:"6px", fontSize:13, fontWeight:600, padding:"6px 12px", cursor:"pointer" };
 
 function Analytics({ data }) {
-  const { last14, hourMap, dowMap, courseMap, thisWeekTotal, lastWeekTotal, weekChange, streaks, procScore, avgPerDay, peakHour, peakDay, insight } = data;
+  const { last14, hourMap, dowMap, courseMap, procScore, avgPerDay, peakHour, peakDay, courses, courseColors } = data;
   const maxDay = Math.max(...last14.map(d => d.count), 1);
   const maxHour = Math.max(...hourMap, 1);
   const maxDow = Math.max(...dowMap, 1);
@@ -552,22 +714,14 @@ function Analytics({ data }) {
 
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:"1.5rem" }}>
-      {/* Insight card */}
-      {insight && (
-        <div style={{ background:"var(--accent-bg)", border:"1px solid var(--accent)", borderRadius:"var(--radius-lg)", padding:"20px" }}>
-          <div style={{ fontSize:11, fontWeight:700, color:"var(--accent)", letterSpacing:1.5, marginBottom:8 }}>AI INSIGHT</div>
-          <div style={{ fontSize:15, color:"var(--text-main)", lineHeight:1.6, fontWeight:500 }}>{insight}</div>
-        </div>
-      )}
-
-      {/* Top stats */}
       <div className="grid-3">
-        <StatCard label="This Week" value={thisWeekTotal} sub={weekChange !== null ? `${weekChange >= 0 ? "+" : ""}${weekChange}% vs last week` : "—"} color="var(--accent)" />
-        <StatCard label="Avg / Day" value={avgPerDay} sub="rolling 7-day" color="var(--success)" />
-        <StatCard label="Best Streak" value={`${streaks.max}d`} sub={`Current: ${streaks.current}d`} color="#3b82f6" />
+        <div style={{ background:"var(--bg-card)", border:`1px solid var(--border)`, borderRadius:"var(--radius-lg)", padding:"16px", boxShadow:"var(--shadow)" }}>
+          <div style={{ fontSize:11, fontWeight:700, color:"var(--text-sub)", marginBottom:8, textTransform:"uppercase" }}>Avg / Day</div>
+          <div style={{ fontSize:28, fontWeight:700, color:"var(--success)", fontFamily:"var(--font-mono)" }}>{avgPerDay}</div>
+          <div style={{ fontSize:12, color:"var(--text-muted)", marginTop:6 }}>rolling 7-day</div>
+        </div>
       </div>
 
-      {/* Procrastination */}
       {procScore && (
         <div style={{ background:"var(--bg-card)", border:"1px solid var(--border)", borderRadius:"var(--radius-lg)", padding:"20px", boxShadow:"var(--shadow)" }}>
           <div style={{ fontSize:11, fontWeight:700, color:"var(--text-sub)", letterSpacing:1.5, marginBottom:16 }}>PROCRASTINATION SCORE</div>
@@ -584,7 +738,6 @@ function Analytics({ data }) {
         </div>
       )}
 
-      {/* Daily bar chart */}
       <div style={{ background:"var(--bg-card)", border:"1px solid var(--border)", borderRadius:"var(--radius-lg)", padding:"20px", boxShadow:"var(--shadow)" }}>
         <div style={{ fontSize:11, fontWeight:700, color:"var(--text-sub)", letterSpacing:1.5, marginBottom:20 }}>DAILY COMPLETIONS (14 DAYS)</div>
         <div style={{ display:"flex", alignItems:"flex-end", gap:4, height:100 }}>
@@ -598,7 +751,6 @@ function Analytics({ data }) {
       </div>
 
       <div className="form-grid">
-        {/* Day of week heatmap */}
         <div style={{ background:"var(--bg-card)", border:"1px solid var(--border)", borderRadius:"var(--radius-lg)", padding:"20px", boxShadow:"var(--shadow)" }}>
           <div style={{ fontSize:11, fontWeight:700, color:"var(--text-sub)", letterSpacing:1.5, marginBottom:20 }}>MOST PRODUCTIVE DAY</div>
           <div style={{ display:"flex", gap:6 }}>
@@ -616,7 +768,6 @@ function Analytics({ data }) {
           </div>
         </div>
 
-        {/* Peak hour */}
         <div style={{ background:"var(--bg-card)", border:"1px solid var(--border)", borderRadius:"var(--radius-lg)", padding:"20px", boxShadow:"var(--shadow)" }}>
           <div style={{ fontSize:11, fontWeight:700, color:"var(--text-sub)", letterSpacing:1.5, marginBottom:20 }}>PEAK PRODUCTIVITY HOUR</div>
           <div style={{ display:"flex", alignItems:"flex-end", gap:2, height:50 }}>
@@ -631,13 +782,13 @@ function Analytics({ data }) {
         </div>
       </div>
 
-      {/* Course breakdown */}
       {courseEntries.length > 0 && (
         <div style={{ background:"var(--bg-card)", border:"1px solid var(--border)", borderRadius:"var(--radius-lg)", padding:"20px", boxShadow:"var(--shadow)" }}>
           <div style={{ fontSize:11, fontWeight:700, color:"var(--text-sub)", letterSpacing:1.5, marginBottom:20 }}>COURSE LOAD BREAKDOWN</div>
           <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
             {courseEntries.map(([c,v]) => {
-              const color = COURSE_COLORS[COURSES.indexOf(c) % COURSE_COLORS.length];
+              const idx = courses.indexOf(c);
+              const color = idx >= 0 ? courseColors[idx % courseColors.length] : "#888780";
               return (
                 <div key={c}>
                   <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, fontWeight:600, marginBottom:8 }}>
@@ -653,16 +804,6 @@ function Analytics({ data }) {
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-function StatCard({ label, value, sub, color }) {
-  return (
-    <div style={{ background:"var(--bg-card)", border:`1px solid var(--border)`, borderRadius:"var(--radius-lg)", padding:"16px", boxShadow:"var(--shadow)" }}>
-      <div style={{ fontSize:11, fontWeight:700, color:"var(--text-sub)", marginBottom:8, textTransform:"uppercase" }}>{label}</div>
-      <div style={{ fontSize:28, fontWeight:700, color, fontFamily:"var(--font-mono)" }}>{value}</div>
-      <div style={{ fontSize:12, color:"var(--text-muted)", marginTop:6 }}>{sub}</div>
     </div>
   );
 }
