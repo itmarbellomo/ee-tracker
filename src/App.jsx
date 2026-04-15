@@ -195,7 +195,7 @@ function assignmentsToRows(assignments) {
 function playSound(type) {
   try {
     // Make sure the file names match exactly what is in your public folder!
-    const audio = new Audio(type === 'task' ? '/task.mp3' : '/subtask.mp3');
+    const audio = new Audio(type === 'task' ? '/task.mp3' : '/subtask_2.mp3');
     audio.volume = 0.5; // Set volume between 0.0 and 1.0
     audio.play();
   } catch (e) {
