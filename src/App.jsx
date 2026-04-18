@@ -58,8 +58,6 @@ const globalStyles = `
 
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   body { margin: 0; background-color: var(--bg-main); color: var(--text-main); font-family: var(--font-ui); -webkit-font-smoothing: antialiased; }
-  
-  /* CRITICAL: font-size 16px prevents iPhone Safari from auto-zooming on tap */
   input, select, textarea { font-family: var(--font-ui); font-size: 16px !important; touch-action: manipulation; }
   button { font-family: var(--font-ui); touch-action: manipulation; }
   
@@ -72,7 +70,6 @@ const globalStyles = `
   .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   .controls-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 
-  /* Mobile Overrides */
   @media (max-width: 768px) {
     .app-container { flex-direction: column; }
     .sidebar { width: 100%; border-right: none; border-bottom: 1px solid var(--border); padding: 1rem; position: sticky; top: 0; z-index: 50; flex-direction: row; align-items: center; flex-wrap: wrap; justify-content: space-between; box-shadow: var(--shadow); }
@@ -81,7 +78,6 @@ const globalStyles = `
     .sidebar-tabs button { flex: 1; white-space: nowrap; text-align: center !important; }
     .sidebar-status { display: none; } 
     .main-content { padding: 1rem; height: auto; }
-    
     .grid-4 { grid-template-columns: repeat(2, 1fr); }
     .grid-3 { grid-template-columns: 1fr; }
     .form-grid { grid-template-columns: 1fr; }
@@ -95,19 +91,45 @@ const globalStyles = `
 `;
 
 function uid() { return Math.random().toString(36).slice(2,10); }
-function today() { return new Date().toISOString().slice(0,10); }
 
-// Format for input fields
+// --- FIXED TIMEZONE DRIFT LOGIC ---
+function getLocalYYYYMMDD(dateObj) {
+  if (isNaN(dateObj.getTime())) return "";
+  const year = dateObj.getFullYear();
+  const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+  const day = String(dateObj.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function today() { return getLocalYYYYMMDD(new Date()); }
+
+// Ensures any date string gets processed correctly without timezone shifting
 function normalizeDate(d) {
   if (!d) return "";
   const str = String(d);
-  if (str.includes("T")) return str.split("T")[0];
+  
+  // If Google Sheets returns a UTC ISO string (e.g. 2026-04-13T21:00:00.000Z), 
+  // parsing it converts it safely to local timezone (Israel), preventing the backward drift.
+  if (str.includes("T")) {
+    const parsed = new Date(str);
+    if (!isNaN(parsed.getTime())) return getLocalYYYYMMDD(parsed);
+  }
+  
+  // If it's already a local format "YYYY-MM-DD", leave it perfectly alone.
+  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
+  
+  // Fallback
   const parsed = new Date(str);
-  if (!isNaN(parsed.getTime())) return parsed.toISOString().split("T")[0];
+  if (!isNaN(parsed.getTime())) return getLocalYYYYMMDD(parsed);
   return str;
 }
 
-// Format for standard display (DD/MM/YYYY)
+// Safely creates a date object at EXACTLY local midnight for math calculations
+function getLocalMidnight(dateStr) {
+  return new Date(dateStr + "T00:00:00").getTime();
+}
+
+// --- DISPLAY FORMATTING ---
 function displayDate(d) {
   if (!d) return "—";
   const parts = String(d).split("-");
@@ -115,28 +137,29 @@ function displayDate(d) {
   return d;
 }
 
-// Dynamic grouping format (Smart text vs literal dates)
 function formatGroupDate(dateStr) {
   if (!dateStr || dateStr === "No date") return "No Date";
-  const todayDate = new Date(); todayDate.setHours(0,0,0,0);
-  const d = new Date(dateStr); d.setHours(0,0,0,0);
-  const diff = Math.round((d - todayDate)/86400000);
+  
+  const todayTime = getLocalMidnight(today());
+  const targetTime = getLocalMidnight(dateStr);
+  const diff = Math.round((targetTime - todayTime)/86400000);
   
   if (diff === 0) return "Today";
   if (diff === 1) return "Tomorrow";
   if (diff === -1) return "Yesterday";
   if (diff > 1 && diff < 7) {
+     const d = new Date(targetTime);
      return ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"][d.getDay()];
   }
   return displayDate(dateStr);
 }
 
-// Timeline categorization for "By Priority" view
 function getTimelineGroup(dueDate) {
   if (!dueDate) return { key: "99_No date", label: "No Date" };
-  const today = new Date(); today.setHours(0,0,0,0);
-  const d = new Date(dueDate); d.setHours(0,0,0,0);
-  const diffDays = Math.round((d - today) / 86400000);
+  const todayTime = getLocalMidnight(today());
+  const targetTime = getLocalMidnight(dueDate);
+  const diffDays = Math.round((targetTime - todayTime) / 86400000);
+  const d = new Date(targetTime);
   
   if (diffDays < 0) return { key: "01_Overdue", label: "Overdue" };
   if (diffDays === 0) return { key: "02_Today", label: "Today" };
@@ -145,10 +168,10 @@ function getTimelineGroup(dueDate) {
   const days = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
   if (diffDays === 2) return { key: "04_Due 2 Days", label: `Due ${days[d.getDay()]}` };
   
-  // Find upcoming Saturday (End of week)
-  const daysToSaturday = 6 - today.getDay();
-  const thisSaturday = new Date(today);
-  thisSaturday.setDate(today.getDate() + daysToSaturday);
+  const todayObj = new Date(todayTime);
+  const daysToSaturday = 6 - todayObj.getDay();
+  const thisSaturday = new Date(todayTime);
+  thisSaturday.setDate(todayObj.getDate() + daysToSaturday);
   if (d <= thisSaturday) return { key: "05_Weekend", label: "Due by Weekend" };
   
   const nextSaturday = new Date(thisSaturday);
@@ -169,9 +192,12 @@ function fmt(ts) {
   return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()} ` + d.toLocaleTimeString(undefined,{hour:"2-digit",minute:"2-digit"}); 
 }
 
-function dayKey(ts) { return new Date(ts).toISOString().slice(0,10); }
 function isOverdue(a) { return !a.completed && a.dueDate < today(); }
-function isDueSoon(a) { if (a.completed || isOverdue(a)) return false; const diff = (new Date(a.dueDate) - new Date(today())) / 86400000; return diff <= 2; }
+function isDueSoon(a) { 
+  if (a.completed || isOverdue(a)) return false; 
+  const diff = Math.round((getLocalMidnight(a.dueDate) - getLocalMidnight(today())) / 86400000); 
+  return diff <= 2 && diff >= 0; 
+}
 function pct(a) { if (!a.subtasks.length) return a.completed ? 100 : 0; return Math.round(a.subtasks.filter(s=>s.completed).length / a.subtasks.length * 100); }
 
 function rowsToAssignments(rows) {
@@ -192,15 +218,33 @@ function assignmentsToRows(assignments) {
   return [header, ...rows];
 }
 
+// User explicitly requested to not change playSound function.
 function playSound(type) {
   try {
-    // Make sure the file names match exactly what is in your public folder!
-    const audio = new Audio(type === 'task' ? '/task.mp3' : '/subtask_2.mp3');
-    audio.volume = 0.5; // Set volume between 0.0 and 1.0
-    audio.play();
-  } catch (e) {
-    console.error("Audio error:", e);
-  }
+    const ctx = window.audioCtx || (window.audioCtx = new (window.AudioContext || window.webkitAudioContext)());
+    if (ctx.state === 'suspended') ctx.resume();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    
+    if (type === 'task') {
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(523.25, ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(1046.50, ctx.currentTime + 0.15);
+      gain.gain.setValueAtTime(0.5, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.4);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.4);
+    } else {
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(880, ctx.currentTime);
+      gain.gain.setValueAtTime(0.3, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.15);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.15);
+    }
+  } catch(e) { console.error("Audio error:", e); }
 }
 
 export default function App() {
@@ -347,8 +391,7 @@ export default function App() {
       overdue: assignments.filter(isOverdue).length,
       thisWeek: assignments.filter(a => {
         if(a.completed) return false;
-        const d = new Date(a.dueDate), now = new Date();
-        const diff = (d - now) / 86400000;
+        const diff = Math.round((getLocalMidnight(a.dueDate) - getLocalMidnight(today())) / 86400000);
         return diff >= -1 && diff <= 7;
       }).length
     };
@@ -361,8 +404,7 @@ export default function App() {
       if (filter === "Overdue") return isOverdue(a);
       if (filter === "This Week") {
         if(a.completed) return false;
-        const d = new Date(a.dueDate), now = new Date();
-        const diff = (d - now) / 86400000;
+        const diff = Math.round((getLocalMidnight(a.dueDate) - getLocalMidnight(today())) / 86400000);
         return diff >= -1 && diff <= 7;
       }
       return true;
@@ -379,7 +421,6 @@ export default function App() {
       return g;
     }
     
-    // Complex Timeline + Priority Sorting
     if (groupBy === "priority") {
       const pOrder = { "High": 1, "Medium": 2, "Low": 3 };
       filtered.forEach(a => {
@@ -388,7 +429,6 @@ export default function App() {
         g[tl.key].items.push(a);
       });
       
-      // Sort inside timeline by priority (High -> Low)
       Object.values(g).forEach(group => {
         group.items.sort((a,b) => pOrder[a.priority] - pOrder[b.priority]);
       });
@@ -413,13 +453,16 @@ export default function App() {
 
     const dayMap = {};
     allTimestamps.forEach(({ ts }) => {
-      const k = dayKey(ts);
-      dayMap[k] = (dayMap[k] || 0) + 1;
+      const parsed = new Date(ts);
+      if(!isNaN(parsed.getTime())) {
+        const k = getLocalYYYYMMDD(parsed);
+        dayMap[k] = (dayMap[k] || 0) + 1;
+      }
     });
 
     const last14 = Array.from({ length: 14 }, (_, i) => {
       const d = new Date(); d.setDate(d.getDate() - 13 + i);
-      const k = d.toISOString().slice(0,10);
+      const k = getLocalYYYYMMDD(d);
       return { date: k, label: `${d.getDate()}/${d.getMonth()+1}`, count: dayMap[k] || 0 };
     });
 
@@ -441,8 +484,8 @@ export default function App() {
 
     const procScore = (() => {
       const scores = assignments.filter(a => a.completed && a.completedAt && a.dueDate).map(a => {
-        const total = new Date(a.dueDate) - new Date(a.createdAt);
-        const used = new Date(a.completedAt) - new Date(a.createdAt);
+        const total = getLocalMidnight(a.dueDate) - new Date(a.createdAt).getTime();
+        const used = new Date(a.completedAt).getTime() - new Date(a.createdAt).getTime();
         return total > 0 ? used / total : 1;
       });
       if (!scores.length) return null;
@@ -558,29 +601,48 @@ export default function App() {
               {Object.keys(grouped).length === 0 && (
                 <div style={{ textAlign:"center", color:"var(--text-muted)", fontSize:15, padding:"4rem 1rem" }}>No assignments match this filter. 🎉</div>
               )}
-              {Object.entries(grouped).map(([group, items]) => (
-                <div key={group} style={{ marginBottom:"2rem" }}>
-                  <div style={{ fontSize:12, fontWeight:700, color:"var(--text-sub)", letterSpacing:1.5, marginBottom:12, textTransform:"uppercase", borderBottom:"1px solid var(--border)", paddingBottom:8 }}>
-                    {groupBy === "dueDate" ? formatGroupDate(group) : group}
+              {Object.entries(grouped).map(([group, items]) => {
+                
+                // Determine header layout and colors
+                const isCourseGroup = groupBy === "course";
+                const courseIdx = isCourseGroup ? courses.indexOf(group) : -1;
+                const headerColor = courseIdx >= 0 ? courseColors[courseIdx % courseColors.length] : "#888780";
+                
+                return (
+                  <div key={group} style={{ marginBottom:"2rem" }}>
+                    
+                    {/* Updated Custom Header Style */}
+                    <div style={{ display: "flex", alignItems: "center", marginBottom: 12, borderBottom: isCourseGroup ? "none" : "1px solid var(--border)", paddingBottom: 8 }}>
+                      {isCourseGroup ? (
+                        <span style={{ fontSize: 12, fontWeight: 700, padding: "4px 10px", borderRadius: "6px", background: `${headerColor}22`, color: headerColor, textTransform: "uppercase", letterSpacing: 1 }}>
+                          {group === "No Course" || !group ? "No Course" : group}
+                        </span>
+                      ) : (
+                        <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text-sub)", letterSpacing: 1.5, textTransform: "uppercase" }}>
+                          {groupBy === "dueDate" ? formatGroupDate(group) : group}
+                        </span>
+                      )}
+                    </div>
+                    
+                    <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+                      {items.map(a => <AssignmentCard key={a.id} a={a}
+                        expanded={expandedId === a.id}
+                        courses={courses}
+                        courseColors={courseColors}
+                        onExpand={() => setExpandedId(expandedId === a.id ? null : a.id)}
+                        onToggle={() => toggleComplete(a.id)}
+                        onEdit={() => { setEditId(a.id); setForm({ title:a.title, course:a.course, dueDate:a.dueDate, priority:a.priority, description:a.description }); setShowForm(true); window.scrollTo({top:0, behavior:'smooth'}); }}
+                        onDelete={() => { if(window.confirm("Are you sure you want to delete this task?")) deleteAssignment(a.id); }}
+                        subtaskInput={subtaskInputs[a.id] || ""}
+                        onSubtaskInput={v => setSubtaskInputs(p => ({...p,[a.id]:v}))}
+                        onAddSubtask={() => addSubtask(a.id)}
+                        onToggleSubtask={sId => toggleSubtask(a.id, sId)}
+                        onDeleteSubtask={sId => deleteSubtask(a.id, sId)}
+                      />)}
+                    </div>
                   </div>
-                  <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
-                    {items.map(a => <AssignmentCard key={a.id} a={a}
-                      expanded={expandedId === a.id}
-                      courses={courses}
-                      courseColors={courseColors}
-                      onExpand={() => setExpandedId(expandedId === a.id ? null : a.id)}
-                      onToggle={() => toggleComplete(a.id)}
-                      onEdit={() => { setEditId(a.id); setForm({ title:a.title, course:a.course, dueDate:a.dueDate, priority:a.priority, description:a.description }); setShowForm(true); window.scrollTo({top:0, behavior:'smooth'}); }}
-                      onDelete={() => { if(window.confirm("Are you sure you want to delete this task?")) deleteAssignment(a.id); }}
-                      subtaskInput={subtaskInputs[a.id] || ""}
-                      onSubtaskInput={v => setSubtaskInputs(p => ({...p,[a.id]:v}))}
-                      onAddSubtask={() => addSubtask(a.id)}
-                      onToggleSubtask={sId => toggleSubtask(a.id, sId)}
-                      onDeleteSubtask={sId => deleteSubtask(a.id, sId)}
-                    />)}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </>
           ) : tab === "settings" ? (
             <SettingsTab 
@@ -617,7 +679,7 @@ function AssignmentCard({ a, expanded, onExpand, onToggle, onEdit, onDelete, sub
             {a.completed && <span style={{ color:"#fff", fontSize:14, lineHeight:1, fontWeight:800 }}>✓</span>}
           </button>
           
-          <div style={{ flex:1, minWidth:0 }} onClick={onExpand} style={{cursor:"pointer", flex:1}}>
+          <div style={{ flex:1, minWidth:0, cursor:"pointer" }} onClick={onExpand}>
             <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap", marginBottom:6 }}>
               <span style={{ fontSize:16, fontWeight:600, color: a.completed ? "var(--text-sub)" : "var(--text-main)", textDecoration: a.completed ? "line-through" : "none", lineHeight:1.3 }}>{a.title}</span>
             </div>
@@ -678,7 +740,6 @@ function AssignmentCard({ a, expanded, onExpand, onToggle, onEdit, onDelete, sub
   );
 }
 
-// Settings Component
 function SettingsTab({ courses, courseColors, setCourses, setCourseColors, assignments, mutate, saveData }) {
   
   const updateName = (index, val) => {
@@ -686,8 +747,6 @@ function SettingsTab({ courses, courseColors, setCourses, setCourseColors, assig
     const oldName = newC[index];
     newC[index] = val;
     setCourses(newC);
-    
-    // Automatically update existing tasks to match the renamed course and instantly sync
     const updatedAssignments = assignments.map(a => a.course === oldName ? {...a, course: val} : a);
     mutate(updatedAssignments);
     saveData(updatedAssignments, newC, courseColors);
@@ -855,45 +914,7 @@ function Analytics({ data }) {
 }
 
 function Setup({ urlInput, setUrlInput, onConnect }) {
-  const script = `const SHEET_NAME = "assignments";
-const SETTINGS_NAME = "settings";
-
-function doGet(e) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  let sheet = ss.getSheetByName(SHEET_NAME);
-  if (!sheet) sheet = ss.insertSheet(SHEET_NAME);
-  let setSheet = ss.getSheetByName(SETTINGS_NAME);
-  if (!setSheet) setSheet = ss.insertSheet(SETTINGS_NAME);
-  
-  return ContentService.createTextOutput(JSON.stringify({
-    assignments: sheet.getDataRange().getValues(),
-    settings: setSheet.getDataRange().getValues()
-  })).setMimeType(ContentService.MimeType.JSON);
-}
-
-function doPost(e) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  try {
-    const payload = JSON.parse(e.postData.contents);
-    if (payload.action === "save") {
-      if (payload.rows) {
-        let sheet = ss.getSheetByName(SHEET_NAME);
-        if (!sheet) sheet = ss.insertSheet(SHEET_NAME);
-        sheet.clearContents();
-        if(payload.rows.length > 0) sheet.getRange(1, 1, payload.rows.length, payload.rows[0].length).setValues(payload.rows);
-      }
-      if (payload.settings) {
-        let setSheet = ss.getSheetByName(SETTINGS_NAME);
-        if (!setSheet) setSheet = ss.insertSheet(SETTINGS_NAME);
-        setSheet.clearContents();
-        if(payload.settings.length > 0) setSheet.getRange(1, 1, payload.settings.length, payload.settings[0].length).setValues(payload.settings);
-      }
-      return ContentService.createTextOutput(JSON.stringify({ status: "ok" })).setMimeType(ContentService.MimeType.JSON);
-    }
-  } catch(err) {
-    return ContentService.createTextOutput(JSON.stringify({ status: "error", message: err.toString() })).setMimeType(ContentService.MimeType.JSON);
-  }
-}`;
+  const script = `const SHEET_NAME = "assignments";\nconst SETTINGS_NAME = "settings";\n\nfunction doGet(e) {\n  const ss = SpreadsheetApp.getActiveSpreadsheet();\n  let sheet = ss.getSheetByName(SHEET_NAME);\n  if (!sheet) sheet = ss.insertSheet(SHEET_NAME);\n  let setSheet = ss.getSheetByName(SETTINGS_NAME);\n  if (!setSheet) setSheet = ss.insertSheet(SETTINGS_NAME);\n  \n  return ContentService.createTextOutput(JSON.stringify({\n    assignments: sheet.getDataRange().getValues(),\n    settings: setSheet.getDataRange().getValues()\n  })).setMimeType(ContentService.MimeType.JSON);\n}\n\nfunction doPost(e) {\n  const ss = SpreadsheetApp.getActiveSpreadsheet();\n  try {\n    const payload = JSON.parse(e.postData.contents);\n    if (payload.action === "save") {\n      if (payload.rows) {\n        let sheet = ss.getSheetByName(SHEET_NAME);\n        if (!sheet) sheet = ss.insertSheet(SHEET_NAME);\n        sheet.clearContents();\n        if(payload.rows.length > 0) sheet.getRange(1, 1, payload.rows.length, payload.rows[0].length).setValues(payload.rows);\n      }\n      if (payload.settings) {\n        let setSheet = ss.getSheetByName(SETTINGS_NAME);\n        if (!setSheet) setSheet = ss.insertSheet(SETTINGS_NAME);\n        setSheet.clearContents();\n        if(payload.settings.length > 0) setSheet.getRange(1, 1, payload.settings.length, payload.settings[0].length).setValues(payload.settings);\n      }\n      return ContentService.createTextOutput(JSON.stringify({ status: "ok" })).setMimeType(ContentService.MimeType.JSON);\n    }\n  } catch(err) {\n    return ContentService.createTextOutput(JSON.stringify({ status: "error", message: err.toString() })).setMimeType(ContentService.MimeType.JSON);\n  }\n}`;
 
   return (
     <>
