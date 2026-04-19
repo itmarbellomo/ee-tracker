@@ -253,6 +253,7 @@ export default function App() {
   const [assignments, setAssignments] = useState([]);
   const [saveStatus, setSaveStatus] = useState("idle");
   const [connected, setConnected] = useState(null);
+  const [lastRefreshed, setLastRefreshed] = useState(null); // <-- ADD THIS
   const [tab, setTab] = useState("assignments");
   const [filter, setFilter] = useState("All"); 
   const [groupBy, setGroupBy] = useState("dueDate"); 
@@ -291,6 +292,7 @@ export default function App() {
          }
       }
       setConnected(true);
+      setLastRefreshed(new Date()); // <-- ADD THIS
     } catch { setConnected(false); }
   }, []);
 
@@ -311,6 +313,7 @@ export default function App() {
         body: JSON.stringify(payload)
       });
       setSaveStatus("saved");
+      setLastRefreshed(new Date()); // <-- ADD THIS
       setTimeout(() => setSaveStatus("idle"), 2000);
     } catch (err) {
       console.error(err);
@@ -508,19 +511,31 @@ export default function App() {
   return (
     <>
       <style>{globalStyles}</style>
-      <div className="app-container">
-        {/* Sidebar / Top Nav */}
+      {/* Sidebar / Top Nav */}
         <div className="sidebar">
+          
+          {/* TOP SECTION */}
           <div className="sidebar-header" style={{ marginBottom:"1rem" }}>
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:4 }}>
               <div style={{ fontSize:14, fontWeight:800, color:"var(--accent)", letterSpacing:1.5, fontFamily:"var(--font-mono)" }}>EE TRACKER</div>
               <div style={{ fontSize:11, fontWeight:600, color:"var(--text-sub)", background:"var(--bg-input)", padding:"4px 8px", borderRadius:"6px" }}>TOTAL: {summary.total}</div>
             </div>
-            <div className="sidebar-status" style={{ fontSize:11, color: connected ? "var(--success)" : "var(--danger)", display:"flex", alignItems:"center", gap:6 }}>
-              <div style={{ width:8, height:8, borderRadius:"50%", background: connected ? "var(--success)" : "var(--danger)" }} />
-              {connected ? "Sheets connected" : "Disconnected"}
+            
+            {/* HIDDEN ON MOBILE #1: Connection & Timestamp */}
+            <div className="sidebar-status" style={{ display:"flex", flexDirection:"column", gap:2, marginTop: 8 }}>
+              <div style={{ fontSize:11, color: connected ? "var(--success)" : "var(--danger)", display:"flex", alignItems:"center", gap:6 }}>
+                <div style={{ width:8, height:8, borderRadius:"50%", background: connected ? "var(--success)" : "var(--danger)" }} />
+                {connected ? "Sheets connected" : "Disconnected"}
+              </div>
+              {connected && lastRefreshed && (
+                <div style={{ fontSize: 10, color: "var(--text-muted)", paddingLeft: 14 }}>
+                  Last synced: {lastRefreshed.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                </div>
+              )}
             </div>
           </div>
+
+          {/* MIDDLE SECTION: Navigation Tabs */}
           <div className="sidebar-tabs" style={{ display:"flex", flexDirection:"column", gap:8, width:"100%" }}>
             {[["assignments", "📋 Tasks"], ["analytics", "📊 Analytics"], ["settings", "⚙️ Settings"]].map(([t, label]) => (
               <button key={t} onClick={() => setTab(t)} style={{ background: tab===t ? "var(--bg-input)" : "transparent", border: tab===t ? "1px solid var(--border)" : "1px solid transparent", borderRadius:"var(--radius-md)", padding:"12px 14px", color: tab===t ? "var(--text-main)" : "var(--text-sub)", fontSize:14, fontWeight:500, cursor:"pointer", textAlign:"left", textTransform:"capitalize", width:"100%", transition:"all 0.2s" }}>
@@ -528,11 +543,15 @@ export default function App() {
               </button>
             ))}
           </div>
+          
+          {/* HIDDEN ON MOBILE #2: Save Status */}
           <div className="sidebar-status" style={{ marginTop:"auto", fontSize:12, color:"var(--text-sub)", textAlign:"center", fontWeight:500 }}>
             {saveStatus === "saving" && <span style={{ color:"var(--warning)" }}>Saving…</span>}
             {saveStatus === "saved" && <span style={{ color:"var(--success)" }}>Saved ✓</span>}
             {saveStatus === "error" && <span style={{ color:"var(--danger)" }}>Save failed</span>}
           </div>
+          
+          {/* HIDDEN ON MOBILE #3: Disconnect Button */}
           <button onClick={() => { localStorage.removeItem(STORAGE_KEY); window.location.reload(); }} className="sidebar-status" style={{ background:"transparent", border:"none", color:"var(--danger)", fontSize:13, cursor:"pointer", marginTop:12, fontWeight: 600, padding: "8px" }}>
             Disconnect
           </button>
