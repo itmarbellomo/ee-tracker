@@ -221,30 +221,13 @@ function assignmentsToRows(assignments) {
 // User explicitly requested to not change playSound function.
 function playSound(type) {
   try {
-    const ctx = window.audioCtx || (window.audioCtx = new (window.AudioContext || window.webkitAudioContext)());
-    if (ctx.state === 'suspended') ctx.resume();
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    
-    if (type === 'task') {
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(523.25, ctx.currentTime);
-      osc.frequency.exponentialRampToValueAtTime(1046.50, ctx.currentTime + 0.15);
-      gain.gain.setValueAtTime(0.5, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.4);
-      osc.start();
-      osc.stop(ctx.currentTime + 0.4);
-    } else {
-      osc.type = 'triangle';
-      osc.frequency.setValueAtTime(880, ctx.currentTime);
-      gain.gain.setValueAtTime(0.3, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.15);
-      osc.start();
-      osc.stop(ctx.currentTime + 0.15);
-    }
-  } catch(e) { console.error("Audio error:", e); }
+    // Make sure the file names match exactly what is in your public folder!
+    const audio = new Audio(type === 'task' ? '/task.mp3' : '/subtask_2.mp3');
+    audio.volume = 0.5; // Set volume between 0.0 and 1.0
+    audio.play();
+  } catch (e) {
+    console.error("Audio error:", e);
+  }
 }
 
 export default function App() {
