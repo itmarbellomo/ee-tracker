@@ -62,7 +62,7 @@ const globalStyles = `
   button { font-family: var(--font-ui); touch-action: manipulation; }
   
   .app-container { display: flex; flex-direction: row; min-height: 100vh; }
-  .sidebar { width: 240px; background: var(--bg-card); border-right: 1px solid var(--border); padding: 1.5rem; display: flex; flex-direction: column; gap: 12px; flex-shrink: 0; }
+  .sidebar { width: 240px; background: var(--bg-card); border-right: 1px solid var(--border); padding: 1.5rem; display: flex; flex-direction: column; gap: 12px; flex-shrink: 0; transition: top 0.3s ease-in-out; }
   .main-content { flex: 1; padding: 2rem; overflow-y: auto; height: 100vh; }
   
   .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
@@ -70,9 +70,13 @@ const globalStyles = `
   .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   .controls-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 
+  /* Desktop Add Button */
+  .add-btn { background: var(--accent); border: none; border-radius: var(--radius-md); padding: 12px 20px; color: #fff; font-size: 14px; cursor: pointer; font-weight: 600; box-shadow: var(--shadow); flex-shrink: 0; }
+
   @media (max-width: 768px) {
     .app-container { flex-direction: column; }
     .sidebar { width: 100%; border-right: none; border-bottom: 1px solid var(--border); padding: 1rem; position: sticky; top: 0; z-index: 50; flex-direction: row; align-items: center; flex-wrap: wrap; justify-content: space-between; box-shadow: var(--shadow); }
+    .sidebar.hidden { top: -180px; } /* Hides nav on scroll */
     .sidebar-header { margin-bottom: 0 !important; width: 100%; }
     .sidebar-tabs { display: flex; gap: 8px; flex-direction: row !important; width: 100%; margin-top: 8px; overflow-x: auto; padding-bottom: 4px; }
     .sidebar-tabs button { flex: 1; white-space: nowrap; text-align: center !important; }
@@ -83,6 +87,9 @@ const globalStyles = `
     .form-grid { grid-template-columns: 1fr; }
     .controls-row { flex-direction: column; align-items: stretch; }
     .controls-row > div { display: flex; justify-content: space-between; width: 100%; overflow-x: auto; padding-bottom: 4px; }
+    
+    /* Mobile Add Button Floating Bottom Left */
+    .add-btn { position: fixed; bottom: 24px; left: 20px; z-index: 100; border-radius: 99px; box-shadow: 0 8px 16px rgba(0,0,0,0.3); padding: 16px 24px; font-size: 16px; }
   }
 
   ::-webkit-scrollbar { width: 6px; height: 6px; }
@@ -108,17 +115,13 @@ function normalizeDate(d) {
   if (!d) return "";
   const str = String(d);
   
-  // If Google Sheets returns a UTC ISO string (e.g. 2026-04-13T21:00:00.000Z), 
-  // parsing it converts it safely to local timezone (Israel), preventing the backward drift.
   if (str.includes("T")) {
     const parsed = new Date(str);
     if (!isNaN(parsed.getTime())) return getLocalYYYYMMDD(parsed);
   }
   
-  // If it's already a local format "YYYY-MM-DD", leave it perfectly alone.
   if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
   
-  // Fallback
   const parsed = new Date(str);
   if (!isNaN(parsed.getTime())) return getLocalYYYYMMDD(parsed);
   return str;
@@ -253,7 +256,7 @@ export default function App() {
   const [assignments, setAssignments] = useState([]);
   const [saveStatus, setSaveStatus] = useState("idle");
   const [connected, setConnected] = useState(null);
-  const [lastRefreshed, setLastRefreshed] = useState(null); // <-- ADD THIS
+  const [lastRefreshed, setLastRefreshed] = useState(null); 
   const [tab, setTab] = useState("assignments");
   const [filter, setFilter] = useState("All"); 
   const [groupBy, setGroupBy] = useState("dueDate"); 
@@ -261,6 +264,10 @@ export default function App() {
   const [editId, setEditId] = useState(null);
   const [expandedId, setExpandedId] = useState(null);
   const [subtaskInputs, setSubtaskInputs] = useState({});
+
+  // Mobile nav scrolling state
+  const [showMobileNav, setShowMobileNav] = useState(true);
+  const [lastScrollY, setLastScrollY] = useState(0);
 
   const [courses, setCourses] = useState(() => {
     try { return JSON.parse(localStorage.getItem("ee-courses")) || DEFAULT_COURSES; } catch { return DEFAULT_COURSES; }
@@ -292,11 +299,36 @@ export default function App() {
          }
       }
       setConnected(true);
-      setLastRefreshed(new Date()); // <-- ADD THIS
+      setLastRefreshed(new Date()); 
     } catch { setConnected(false); }
   }, []);
 
   useEffect(() => { if (scriptUrl) fetchData(scriptUrl); }, [scriptUrl, fetchData]);
+
+  // NEW: Refreshes data dynamically when returning to the app
+  useEffect(() => {
+    if (!scriptUrl) return;
+    const handleFocus = () => { fetchData(scriptUrl); };
+    window.addEventListener("focus", handleFocus);
+    return () => window.removeEventListener("focus", handleFocus);
+  }, [scriptUrl, fetchData]);
+
+  // NEW: Hide navigation on scroll specifically for Mobile
+  useEffect(() => {
+    const handleScroll = () => {
+      if (window.innerWidth > 768) return;
+      const currentScrollY = window.scrollY;
+      
+      if (currentScrollY > lastScrollY && currentScrollY > 60) {
+        setShowMobileNav(false);
+      } else if (currentScrollY < lastScrollY) {
+        setShowMobileNav(true);
+      }
+      setLastScrollY(currentScrollY);
+    };
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, [lastScrollY]);
 
   const saveData = useCallback(async (newAssignments, curCourses, curColors) => {
     if (!scriptUrl) return;
@@ -313,7 +345,7 @@ export default function App() {
         body: JSON.stringify(payload)
       });
       setSaveStatus("saved");
-      setLastRefreshed(new Date()); // <-- ADD THIS
+      setLastRefreshed(new Date());
       setTimeout(() => setSaveStatus("idle"), 2000);
     } catch (err) {
       console.error(err);
@@ -511,31 +543,35 @@ export default function App() {
   return (
     <>
       <style>{globalStyles}</style>
-      {/* Sidebar / Top Nav */}
-        <div className="sidebar">
+      <div className="app-container">
+        
+        {/* Sidebar / Top Nav (Animated on Scroll) */}
+        <div className={`sidebar ${!showMobileNav ? "hidden" : ""}`}>
           
-          {/* TOP SECTION */}
-          <div className="sidebar-header" style={{ marginBottom:"1rem" }}>
+          <div className="sidebar-header" style={{ marginBottom:"1rem", width: "100%" }}>
+            {/* UPDATED: Centered Connection info between Title and Total */}
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:4 }}>
-              <div style={{ fontSize:14, fontWeight:800, color:"var(--accent)", letterSpacing:1.5, fontFamily:"var(--font-mono)" }}>EE TRACKER</div>
-              <div style={{ fontSize:11, fontWeight:600, color:"var(--text-sub)", background:"var(--bg-input)", padding:"4px 8px", borderRadius:"6px" }}>TOTAL: {summary.total}</div>
-            </div>
-            
-            {/* HIDDEN ON MOBILE #1: Connection & Timestamp */}
-            <div className="sidebar-status" style={{ display:"flex", flexDirection:"column", gap:2, marginTop: 8 }}>
-              <div style={{ fontSize:11, color: connected ? "var(--success)" : "var(--danger)", display:"flex", alignItems:"center", gap:6 }}>
-                <div style={{ width:8, height:8, borderRadius:"50%", background: connected ? "var(--success)" : "var(--danger)" }} />
-                {connected ? "Sheets connected" : "Disconnected"}
-              </div>
-              {connected && lastRefreshed && (
-                <div style={{ fontSize: 10, color: "var(--text-muted)", paddingLeft: 14 }}>
-                  Last synced: {lastRefreshed.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              <div style={{ fontSize:14, fontWeight:800, color:"var(--accent)", letterSpacing:1.5, fontFamily:"var(--font-mono)", flex: 1 }}>EE TRACKER</div>
+              
+              <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", flex: 1 }}>
+                <div style={{ fontSize:10, color: connected ? "var(--success)" : "var(--danger)", display:"flex", alignItems:"center", gap:4 }}>
+                  <div style={{ width:8, height:8, borderRadius:"50%", background: connected ? "var(--success)" : "var(--danger)" }} />
+                  {connected ? "Connected" : "Disconnected"}
                 </div>
-              )}
+                {connected && lastRefreshed && (
+                  <div style={{ fontSize: 9, color: "var(--text-muted)" }}>
+                    Sync: {lastRefreshed.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </div>
+                )}
+              </div>
+
+              <div style={{ flex: 1, display:"flex", justifyContent:"flex-end" }}>
+                <div style={{ fontSize:11, fontWeight:600, color:"var(--text-sub)", background:"var(--bg-input)", padding:"4px 8px", borderRadius:"6px", whiteSpace:"nowrap" }}>TOTAL: {summary.total}</div>
+              </div>
             </div>
           </div>
 
-          {/* MIDDLE SECTION: Navigation Tabs */}
+          {/* Navigation Tabs */}
           <div className="sidebar-tabs" style={{ display:"flex", flexDirection:"column", gap:8, width:"100%" }}>
             {[["assignments", "📋 Tasks"], ["analytics", "📊 Analytics"], ["settings", "⚙️ Settings"]].map(([t, label]) => (
               <button key={t} onClick={() => setTab(t)} style={{ background: tab===t ? "var(--bg-input)" : "transparent", border: tab===t ? "1px solid var(--border)" : "1px solid transparent", borderRadius:"var(--radius-md)", padding:"12px 14px", color: tab===t ? "var(--text-main)" : "var(--text-sub)", fontSize:14, fontWeight:500, cursor:"pointer", textAlign:"left", textTransform:"capitalize", width:"100%", transition:"all 0.2s" }}>
@@ -544,14 +580,12 @@ export default function App() {
             ))}
           </div>
           
-          {/* HIDDEN ON MOBILE #2: Save Status */}
           <div className="sidebar-status" style={{ marginTop:"auto", fontSize:12, color:"var(--text-sub)", textAlign:"center", fontWeight:500 }}>
             {saveStatus === "saving" && <span style={{ color:"var(--warning)" }}>Saving…</span>}
             {saveStatus === "saved" && <span style={{ color:"var(--success)" }}>Saved ✓</span>}
             {saveStatus === "error" && <span style={{ color:"var(--danger)" }}>Save failed</span>}
           </div>
           
-          {/* HIDDEN ON MOBILE #3: Disconnect Button */}
           <button onClick={() => { localStorage.removeItem(STORAGE_KEY); window.location.reload(); }} className="sidebar-status" style={{ background:"transparent", border:"none", color:"var(--danger)", fontSize:13, cursor:"pointer", marginTop:12, fontWeight: 600, padding: "8px" }}>
             Disconnect
           </button>
@@ -578,8 +612,10 @@ export default function App() {
 
               {/* Controls */}
               <div className="controls-row" style={{ marginBottom:"1.5rem" }}>
-                <button onClick={() => { setShowForm(true); setEditId(null); setForm({ title:"", course:courses.length > 0 ? courses[0] : "", dueDate:"", priority:"Medium", description:"" }); }}
-                  style={{ background:"var(--accent)", border:"none", borderRadius:"var(--radius-md)", padding:"12px 20px", color:"#fff", fontSize:14, cursor:"pointer", fontWeight:600, boxShadow:"var(--shadow)", flexShrink:0 }}>
+                <button 
+                  onClick={() => { setShowForm(true); setEditId(null); setForm({ title:"", course:courses.length > 0 ? courses[0] : "", dueDate:"", priority:"Medium", description:"" }); }}
+                  className="add-btn"
+                >
                   + New Assignment
                 </button>
                 <div style={{ marginLeft:"auto", display:"flex", gap:6 }}>
@@ -630,7 +666,6 @@ export default function App() {
                 return (
                   <div key={group} style={{ marginBottom:"2rem" }}>
                     
-                    {/* Updated Custom Header Style */}
                     <div style={{ display: "flex", alignItems: "center", marginBottom: 12, borderBottom: isCourseGroup ? "none" : "1px solid var(--border)", paddingBottom: 8 }}>
                       {isCourseGroup ? (
                         <span style={{ fontSize: 12, fontWeight: 700, padding: "4px 10px", borderRadius: "6px", background: `${headerColor}22`, color: headerColor, textTransform: "uppercase", letterSpacing: 1 }}>
