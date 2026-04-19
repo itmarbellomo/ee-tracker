@@ -110,7 +110,6 @@ function getLocalYYYYMMDD(dateObj) {
 
 function today() { return getLocalYYYYMMDD(new Date()); }
 
-// Ensures any date string gets processed correctly without timezone shifting
 function normalizeDate(d) {
   if (!d) return "";
   const str = String(d);
@@ -127,12 +126,10 @@ function normalizeDate(d) {
   return str;
 }
 
-// Safely creates a date object at EXACTLY local midnight for math calculations
 function getLocalMidnight(dateStr) {
   return new Date(dateStr + "T00:00:00").getTime();
 }
 
-// --- DISPLAY FORMATTING ---
 function displayDate(d) {
   if (!d) return "—";
   const parts = String(d).split("-");
@@ -256,7 +253,11 @@ export default function App() {
   const [assignments, setAssignments] = useState([]);
   const [saveStatus, setSaveStatus] = useState("idle");
   const [connected, setConnected] = useState(null);
+  
+  // Refresh and Sync States
   const [lastRefreshed, setLastRefreshed] = useState(null); 
+  const [nowTime, setNowTime] = useState(new Date());
+
   const [tab, setTab] = useState("assignments");
   const [filter, setFilter] = useState("All"); 
   const [groupBy, setGroupBy] = useState("dueDate"); 
@@ -265,7 +266,6 @@ export default function App() {
   const [expandedId, setExpandedId] = useState(null);
   const [subtaskInputs, setSubtaskInputs] = useState({});
 
-  // Mobile nav scrolling state
   const [showMobileNav, setShowMobileNav] = useState(true);
   const [lastScrollY, setLastScrollY] = useState(0);
 
@@ -276,6 +276,12 @@ export default function App() {
     try { return JSON.parse(localStorage.getItem("ee-colors")) || DEFAULT_COLORS; } catch { return DEFAULT_COLORS; }
   });
   const [form, setForm] = useState({ title:"", course: courses.length > 0 ? courses[0] : "", dueDate:"", priority:"Medium", description:"" });
+
+  // Update current time every 5 seconds to check sync status dynamically
+  useEffect(() => {
+    const interval = setInterval(() => setNowTime(new Date()), 5000);
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => { localStorage.setItem("ee-courses", JSON.stringify(courses)); }, [courses]);
   useEffect(() => { localStorage.setItem("ee-colors", JSON.stringify(courseColors)); }, [courseColors]);
@@ -300,12 +306,12 @@ export default function App() {
       }
       setConnected(true);
       setLastRefreshed(new Date()); 
+      setNowTime(new Date()); 
     } catch { setConnected(false); }
   }, []);
 
   useEffect(() => { if (scriptUrl) fetchData(scriptUrl); }, [scriptUrl, fetchData]);
 
-  // NEW: Refreshes data dynamically when returning to the app
   useEffect(() => {
     if (!scriptUrl) return;
     const handleFocus = () => { fetchData(scriptUrl); };
@@ -313,12 +319,10 @@ export default function App() {
     return () => window.removeEventListener("focus", handleFocus);
   }, [scriptUrl, fetchData]);
 
-  // NEW: Hide navigation on scroll specifically for Mobile
   useEffect(() => {
     const handleScroll = () => {
       if (window.innerWidth > 768) return;
       const currentScrollY = window.scrollY;
-      
       if (currentScrollY > lastScrollY && currentScrollY > 60) {
         setShowMobileNav(false);
       } else if (currentScrollY < lastScrollY) {
@@ -346,6 +350,7 @@ export default function App() {
       });
       setSaveStatus("saved");
       setLastRefreshed(new Date());
+      setNowTime(new Date());
       setTimeout(() => setSaveStatus("idle"), 2000);
     } catch (err) {
       console.error(err);
@@ -538,6 +543,11 @@ export default function App() {
     return { last14, hourMap, dowMap, courseMap, thisWeekTotal, lastWeekTotal, weekChange, procScore, avgPerDay, peakHour, peakDay, insight: null };
   }, [assignments]);
 
+  // Dynamic Sync Status Variables
+  const isRecentlySynced = connected && lastRefreshed && (nowTime.getTime() - lastRefreshed.getTime() < 60000);
+  const syncColor = !connected ? "var(--danger)" : (isRecentlySynced ? "var(--success)" : "var(--warning)");
+  const syncText = !connected ? "Disconnected" : (isRecentlySynced ? "Connected" : "Sync Now");
+
   if (!scriptUrl) return <Setup urlInput={urlInput} setUrlInput={setUrlInput} onConnect={connectUrl} />;
 
   return (
@@ -553,15 +563,14 @@ export default function App() {
               <div style={{ fontSize:14, fontWeight:800, color:"var(--accent)", letterSpacing:1.5, fontFamily:"var(--font-mono)", flex: 1 }}>EE TRACKER</div>
               
               <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", flex: 1 }}>
-                <div style={{ fontSize:10, color: connected ? "var(--success)" : "var(--danger)", display:"flex", alignItems:"center", gap:4 }}>
-                  <div style={{ width:8, height:8, borderRadius:"50%", background: connected ? "var(--success)" : "var(--danger)" }} />
-                  {connected ? "Connected" : "Disconnected"}
-                </div>
-                {connected && lastRefreshed && (
-                  <div style={{ fontSize: 9, color: "var(--text-muted)" }}>
-                    Sync: {lastRefreshed.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                  </div>
-                )}
+                <button 
+                  onClick={() => { if(scriptUrl && !isRecentlySynced) fetchData(scriptUrl); }}
+                  style={{ background: "transparent", border: "none", fontSize:10, fontWeight: 600, color: syncColor, display:"flex", alignItems:"center", gap:5, cursor: (!isRecentlySynced && scriptUrl) ? "pointer" : "default", padding: "4px 8px", fontFamily: "var(--font-ui)", outline: "none" }}
+                  title={!isRecentlySynced ? "Click to fetch latest data" : ""}
+                >
+                  <div style={{ width:8, height:8, borderRadius:"50%", background: syncColor }} />
+                  {syncText}
+                </button>
               </div>
 
               <div style={{ flex: 1, display:"flex", justifyContent:"flex-end" }}>
@@ -657,7 +666,6 @@ export default function App() {
               )}
               {Object.entries(grouped).map(([group, items]) => {
                 
-                // Determine header layout and colors
                 const isCourseGroup = groupBy === "course";
                 const courseIdx = isCourseGroup ? courses.indexOf(group) : -1;
                 const headerColor = courseIdx >= 0 ? courseColors[courseIdx % courseColors.length] : "#888780";
@@ -665,7 +673,6 @@ export default function App() {
                 return (
                   <div key={group} style={{ marginBottom:"2rem" }}>
                     
-                    {/* UPDATED: Center layout for Course Headers */}
                     <div style={{ display: "flex", alignItems: "center", justifyContent: isCourseGroup ? "center" : "flex-start", marginBottom: 12, borderBottom: isCourseGroup ? "none" : "1px solid var(--border)", paddingBottom: 8 }}>
                       {isCourseGroup ? (
                         <span style={{ fontSize: 12, fontWeight: 700, padding: "4px 10px", borderRadius: "6px", background: `${headerColor}22`, color: headerColor, textTransform: "uppercase", letterSpacing: 1 }}>
