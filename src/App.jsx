@@ -88,8 +88,8 @@ const globalStyles = `
     .controls-row { flex-direction: column; align-items: stretch; }
     .controls-row > div { display: flex; justify-content: space-between; width: 100%; overflow-x: auto; padding-bottom: 4px; }
     
-    /* Mobile Add Button Floating Bottom Left */
-    .add-btn { position: fixed; bottom: 24px; left: 20px; z-index: 100; border-radius: 99px; box-shadow: 0 8px 16px rgba(0,0,0,0.3); padding: 16px 24px; font-size: 16px; }
+    /* Mobile Add Button Floating Bottom Right */
+    .add-btn { position: fixed; bottom: 24px; right: 20px; z-index: 100; border-radius: 99px; box-shadow: 0 8px 16px rgba(0,0,0,0.3); padding: 16px 24px; font-size: 16px; }
   }
 
   ::-webkit-scrollbar { width: 6px; height: 6px; }
@@ -549,7 +549,6 @@ export default function App() {
         <div className={`sidebar ${!showMobileNav ? "hidden" : ""}`}>
           
           <div className="sidebar-header" style={{ marginBottom:"1rem", width: "100%" }}>
-            {/* UPDATED: Centered Connection info between Title and Total */}
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:4 }}>
               <div style={{ fontSize:14, fontWeight:800, color:"var(--accent)", letterSpacing:1.5, fontFamily:"var(--font-mono)", flex: 1 }}>EE TRACKER</div>
               
@@ -666,7 +665,8 @@ export default function App() {
                 return (
                   <div key={group} style={{ marginBottom:"2rem" }}>
                     
-                    <div style={{ display: "flex", alignItems: "center", marginBottom: 12, borderBottom: isCourseGroup ? "none" : "1px solid var(--border)", paddingBottom: 8 }}>
+                    {/* UPDATED: Center layout for Course Headers */}
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: isCourseGroup ? "center" : "flex-start", marginBottom: 12, borderBottom: isCourseGroup ? "none" : "1px solid var(--border)", paddingBottom: 8 }}>
                       {isCourseGroup ? (
                         <span style={{ fontSize: 12, fontWeight: 700, padding: "4px 10px", borderRadius: "6px", background: `${headerColor}22`, color: headerColor, textTransform: "uppercase", letterSpacing: 1 }}>
                           {group === "No Course" || !group ? "No Course" : group}
